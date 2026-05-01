@@ -13,7 +13,6 @@ preview_id = "00410bf2f1054283819de99e7958be89"
 # Uncomment and update to route a custom domain through this worker.
 [[routes]]
 pattern = "share.sillylittle.tech/*"
-zone_name = "sillylittle.tech"
 zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
 
 
