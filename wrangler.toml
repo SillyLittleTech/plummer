@@ -1,0 +1,21 @@
+name = "plummer"
+main = "src/index.js"
+compatibility_date = "2025-04-01"
+
+# ─── KV Namespace ────────────────────────────────────────────────────────────
+# After creating your KV namespace (see README for steps), replace the ID below.
+[[kv_namespaces]]
+binding = "LINKIVERSE"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+# Uncomment and fill in a preview namespace ID for `wrangler dev`:
+# preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_NAMESPACE_ID"
+
+# ─── Custom Domain (optional) ────────────────────────────────────────────────
+# Uncomment and update to route a custom domain through this worker.
+# [[routes]]
+# pattern = "share.sillylittle.tech/*"
+# zone_name = "sillylittle.tech"
+
+# ─── Secrets (set via CLI, NOT in this file) ─────────────────────────────────
+# npx wrangler secret put ADMIN_SECRET
+# This is the password used to access the /admin dashboard.
