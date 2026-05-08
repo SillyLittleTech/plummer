@@ -151,59 +151,26 @@ export function adminPage(links, origin, allowedHosts = []) {
   </section>
 
   <section class="card folders-card" aria-label="Folders">
-    <h2>Folders</h2>
-    <form id="folderCreateForm" novalidate style="margin-bottom:14px;">
-      <div class="form-row">
-        <div class="form-group">
-          <label for="folderHost">Domain</label>
-          <select class="select" id="folderHost" name="host" required>
-            ${hosts.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join('')}
-          </select>
-          <p class="hint">Folders are per-domain.</p>
-        </div>
-        <div class="form-group">
-          <label for="folderSlugCreate">Folder slug</label>
-          <input class="input" type="text" id="folderSlugCreate" name="slug"
-            placeholder="referals" pattern="[a-zA-Z0-9_-]+" required autocomplete="off" spellcheck="false" />
-          <p class="hint">Becomes a reserved path like <code>/{slug}/</code>.</p>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="folderNameCreate">Name</label>
-          <input class="input" type="text" id="folderNameCreate" name="name" placeholder="Referrals" />
-        </div>
-        <div class="form-group">
-          <label for="folderPasswordCreate">Password <span class="opt">(optional)</span></label>
-          <input class="input" type="password" id="folderPasswordCreate" name="password"
-            placeholder="Leave blank for none" autocomplete="new-password" />
-          <p class="hint">If set, visitors must enter it to view the folder listing.</p>
-        </div>
-      </div>
-      <label style="display:flex; align-items:center; gap:10px; font-weight:700; font-size:13px; opacity:0.9;">
-        <input type="checkbox" id="folderListingEnabledCreate" checked />
-        Listing enabled
-      </label>
-      <div id="folderFormError" class="alert alert-error" style="display:none; margin-top:12px;"></div>
-      <button type="submit" class="btn btn-secondary" style="margin-top:12px;">Create Folder</button>
-    </form>
-
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Slug</th>
-            <th>Name</th>
-            <th class="center">Listing</th>
-            <th class="center">Password</th>
-            <th class="center">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="foldersBody">
-          <tr><td colspan="5" class="empty-row">No folders yet.</td></tr>
-        </tbody>
-      </table>
+    <div class="folder-head">
+      <h2 style="margin:0;">Folders</h2>
+      <button class="btn btn-sm btn-secondary" id="newFolderBtn" type="button" title="Create folder">＋</button>
     </div>
+    <div class="form-group" style="margin-top:12px;">
+      <label for="folderHost">Domain</label>
+      <select class="select" id="folderHost" name="host" required>
+        ${hosts.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join('')}
+      </select>
+      <p class="hint">Folders are per-domain. The active folder filters the link table.</p>
+    </div>
+
+    <nav id="folderList" class="folder-list" aria-label="Folder list">
+      <button class="folder-item is-active" type="button" data-folder="">
+        <span class="folder-dot"></span>
+        <span class="folder-name">Default</span>
+      </button>
+      <div class="folder-divider"></div>
+      <div class="folder-empty">Loading…</div>
+    </nav>
   </section>
 
   <section class="card audit-card" aria-label="Audit log">
@@ -293,6 +260,54 @@ export function adminPage(links, origin, allowedHosts = []) {
   </div>
 </div>
 
+<div id="folderBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Create folder" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Create folder</h3>
+      <button class="btn btn-sm btn-link" id="folderCancelBtn" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <form id="folderModalForm" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="folderHostCreate">Domain</label>
+            <select class="select" id="folderHostCreate" name="host" required>
+              ${hosts.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="folderSlugCreate">Folder slug</label>
+            <input class="input" type="text" id="folderSlugCreate" name="slug"
+              placeholder="referrals" pattern="[a-zA-Z0-9_-]+" required autocomplete="off" spellcheck="false" />
+            <p class="hint">Becomes a reserved path like <code>/{slug}/</code>.</p>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="folderNameCreate">Name</label>
+            <input class="input" type="text" id="folderNameCreate" name="name" placeholder="Referrals" />
+          </div>
+          <div class="form-group">
+            <label for="folderPasswordCreate">Password <span class="opt">(optional)</span></label>
+            <input class="input" type="password" id="folderPasswordCreate" name="password"
+              placeholder="Leave blank for none" autocomplete="new-password" />
+            <p class="hint">If set, visitors must enter it to view the folder listing.</p>
+          </div>
+        </div>
+        <label style="display:flex; align-items:center; gap:10px; font-weight:700; font-size:13px; opacity:0.9;">
+          <input type="checkbox" id="folderListingEnabledCreate" checked />
+          Listing enabled
+        </label>
+        <div id="folderFormError" class="alert alert-error" style="display:none; margin-top:12px;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="folderCancelBtn2" type="button">Cancel</button>
+          <button class="btn btn-primary" type="submit">Create folder</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>`,
 
     /* extra CSS */
@@ -355,6 +370,34 @@ export function adminPage(links, origin, allowedHosts = []) {
     .actions-cell { display: flex; gap: 6px; justify-content: center; }
     td:last-child { text-align: center; }
     td:last-child .btn { margin: 2px; }
+
+    .folders-card { margin-bottom: 20px; }
+    .folder-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .folder-list { display:flex; flex-direction:column; gap:6px; margin-top: 10px; }
+    .folder-item {
+      display:flex; align-items:center; gap:10px;
+      width: 100%;
+      text-align:left;
+      padding: 10px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 13px;
+      opacity: 0.92;
+    }
+    .folder-item:hover { background: color-mix(in srgb, var(--card-hover) 70%, transparent); }
+    .folder-item.is-active {
+      background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+      border-color: color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
+    }
+    .folder-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--accent-color); opacity: 0.9; }
+    .folder-name { flex: 1; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-meta { font-weight: 600; opacity: 0.65; font-size: 12px; }
+    .folder-divider { height: 1px; background: var(--border-color); opacity: 0.7; margin: 6px 0; }
+    .folder-empty { padding: 12px 10px; opacity: 0.65; font-style: italic; }
 
     .pill {
       display: inline-block;
@@ -448,12 +491,25 @@ function setRowStatus(host, slug, status) {
 }
 
 let SHOW_DELETED = false;
+let ACTIVE_FOLDER = '';
+let ACTIVE_FOLDER_NAME = 'Default';
+let ACTIVE_HOST = '';
+let LAST_FOLDERS = [];
+
 function applyRowVisibility() {
+  const hostSel = document.getElementById('host');
+  if (hostSel) ACTIVE_HOST = hostSel.value;
+
   const rows = document.querySelectorAll('#linksBody tr[data-status]');
   for (const row of rows) {
     const s = row.dataset.status || 'active';
-    if (s === 'deleted' && !SHOW_DELETED) row.style.display = 'none';
-    else row.style.display = '';
+    const host = row.dataset.host || '';
+    const folder = row.dataset.folderSlug || '';
+
+    const hostOk = !ACTIVE_HOST || host === ACTIVE_HOST;
+    const folderOk = folder === (ACTIVE_FOLDER || '');
+    const deletedOk = !(s === 'deleted' && !SHOW_DELETED);
+    row.style.display = hostOk && folderOk && deletedOk ? '' : 'none';
   }
 }
 
@@ -502,37 +558,57 @@ function renderFolderOptions(selectEl, folders) {
     folders.map((f) => '<option value=\"' + String(f.slug).replace(/\"/g,'&quot;') + '\">' + String(f.name || f.slug).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>').join('');
 }
 
-function renderFoldersTable(folders) {
-  const tbody = document.getElementById('foldersBody');
-  if (!folders || folders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan=\"5\" class=\"empty-row\">No folders yet.</td></tr>';
-    return;
-  }
+function renderFolderSidebar(folders) {
+  const list = document.getElementById('folderList');
+  if (!list) return;
 
   function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  tbody.innerHTML = folders.map((f) => {
-    const listing = f.listingEnabled === false ? 'Off' : 'On';
-    const pass = f.passwordHash ? '🔒' : '—';
-    return '<tr data-folder-slug=\"' + esc(f.slug) + '\">' +
-      '<td><code class=\"slug-code\">' + esc(f.slug) + '</code></td>' +
-      '<td>' + esc(f.name || f.slug) + '</td>' +
-      '<td class=\"center\">' + esc(listing) + '</td>' +
-      '<td class=\"center\">' + pass + '</td>' +
-      '<td class=\"center nowrap\">' +
-        '<button class=\"btn btn-sm btn-danger\" onclick=\"deleteFolder(\\'' + esc(document.getElementById('folderHost').value) + '\\', \\'' + esc(f.slug) + '\\')\">🗑</button>' +
-      '</td>' +
-    '</tr>';
+  const items = (folders || []).map((f) => {
+    const name = f.name || f.slug;
+    const metaBits = [];
+    if (f.listingEnabled === false) metaBits.push('listing off');
+    if (f.passwordHash) metaBits.push('🔒');
+    const meta = metaBits.length ? ('<span class=\"folder-meta\">' + esc(metaBits.join(' • ')) + '</span>') : '';
+    const activeClass = (String(f.slug) === String(ACTIVE_FOLDER)) ? ' is-active' : '';
+    return (
+      '<button class=\"folder-item' + activeClass + '\" type=\"button\" data-folder=\"' + esc(f.slug) + '\" data-folder-name=\"' + esc(name) + '\">' +
+        '<span class=\"folder-dot\"></span>' +
+        '<span class=\"folder-name\">' + esc(name) + '</span>' +
+        meta +
+      '</button>'
+    );
   }).join('');
+
+  const defaultActive = (ACTIVE_FOLDER || '') === '' ? ' is-active' : '';
+  const empty = (folders && folders.length) ? '' : '<div class=\"folder-empty\">No folders yet.</div>';
+
+  list.innerHTML =
+    '<button class=\"folder-item' + defaultActive + '\" type=\"button\" data-folder=\"\" data-folder-name=\"Default\">' +
+      '<span class=\"folder-dot\"></span>' +
+      '<span class=\"folder-name\">Default</span>' +
+    '</button>' +
+    '<div class=\"folder-divider\"></div>' +
+    (items || empty);
+
+  list.querySelectorAll('.folder-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const slug = btn.getAttribute('data-folder') || '';
+      const name = btn.getAttribute('data-folder-name') || (slug ? slug : 'Default');
+      setActiveFolder(slug, name);
+    });
+  });
 }
 
 async function refreshFoldersForHost(host) {
   const folders = await fetchFolders(host);
+  LAST_FOLDERS = folders;
   renderFolderOptions(document.getElementById('folderSlug'), folders);
   renderFolderOptions(document.getElementById('editFolderSlug'), folders);
-  renderFoldersTable(folders);
+  restoreActiveFolderForHost(host);
+  renderFolderSidebar(folders);
 }
 
 async function deleteFolder(host, slug) {
@@ -542,6 +618,32 @@ async function deleteFolder(host, slug) {
   if (!r.ok) return showToast('Error: ' + (d.error || 'Unknown error'), true);
   showToast('Folder deleted: ' + slug);
   await refreshFoldersForHost(host);
+}
+
+function restoreActiveFolderForHost(host) {
+  const key = 'plummer.activeFolder:' + host;
+  const saved = localStorage.getItem(key);
+  if (saved === null) return;
+  try {
+    const parsed = JSON.parse(saved);
+    setActiveFolder(parsed.slug || '', parsed.name || (parsed.slug ? parsed.slug : 'Default'), { persist: false });
+  } catch {
+    // ignore
+  }
+}
+
+function setActiveFolder(folderSlug, folderName, opts) {
+  ACTIVE_FOLDER = folderSlug || '';
+  ACTIVE_FOLDER_NAME = folderName || (ACTIVE_FOLDER ? ACTIVE_FOLDER : 'Default');
+  const host = document.getElementById('host')?.value || '';
+  const persist = !(opts && opts.persist === false);
+  if (persist && host) {
+    localStorage.setItem('plummer.activeFolder:' + host, JSON.stringify({ slug: ACTIVE_FOLDER, name: ACTIVE_FOLDER_NAME }));
+  }
+  const sel = document.getElementById('folderSlug');
+  if (sel) sel.value = ACTIVE_FOLDER;
+  renderFolderSidebar(LAST_FOLDERS);
+  applyRowVisibility();
 }
 
 async function fetchAudit(limit) {
@@ -595,11 +697,33 @@ document.getElementById('folderHost').addEventListener('change', async (e) => {
   await refreshFoldersForHost(e.target.value);
 });
 
-document.getElementById('folderCreateForm').addEventListener('submit', async function(e) {
+function openFolderModal() {
+  const backdrop = document.getElementById('folderBackdrop');
+  if (!backdrop) return;
+  const host = document.getElementById('folderHost')?.value || document.getElementById('host')?.value || '';
+  const hostCreate = document.getElementById('folderHostCreate');
+  if (hostCreate && host) hostCreate.value = host;
+  backdrop.style.display = '';
+  setTimeout(() => document.getElementById('folderSlugCreate')?.focus(), 0);
+}
+
+function closeFolderModal() {
+  const backdrop = document.getElementById('folderBackdrop');
+  if (!backdrop) return;
+  backdrop.style.display = 'none';
+  const errEl = document.getElementById('folderFormError');
+  if (errEl) errEl.style.display = 'none';
+}
+
+document.getElementById('newFolderBtn')?.addEventListener('click', openFolderModal);
+document.getElementById('folderCancelBtn')?.addEventListener('click', closeFolderModal);
+document.getElementById('folderCancelBtn2')?.addEventListener('click', closeFolderModal);
+
+document.getElementById('folderModalForm').addEventListener('submit', async function(e) {
   e.preventDefault();
   const errEl = document.getElementById('folderFormError');
   errEl.style.display = 'none';
-  const host = document.getElementById('folderHost').value.trim();
+  const host = document.getElementById('folderHostCreate').value.trim();
   const slug = document.getElementById('folderSlugCreate').value.trim();
   const name = document.getElementById('folderNameCreate').value.trim();
   const password = document.getElementById('folderPasswordCreate').value;
@@ -622,6 +746,7 @@ document.getElementById('folderCreateForm').addEventListener('submit', async fun
   document.getElementById('folderPasswordCreate').value = '';
   document.getElementById('folderListingEnabledCreate').checked = true;
   await refreshFoldersForHost(host);
+  closeFolderModal();
 });
 
 // --- Edit modal helpers ---
