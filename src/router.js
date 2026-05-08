@@ -13,7 +13,7 @@ import {
 } from './kv.js';
 import { adminPage } from './pages/admin.js';
 import { homePage } from './pages/home.js';
-import { deletedPage, expiredPage, inactivePage, notFoundPage, passwordPage } from './pages/errors.js';
+import { deletedPage, expiredPage, inactivePage, misconfiguredPage, notFoundPage, passwordPage } from './pages/errors.js';
 import { folderListingPage } from './pages/folders.js';
 import { checkAdminAuth, unauthorizedResponse } from './security.js';
 import { isValidUrl, safeEqual, sha256 } from './util.js';
@@ -455,9 +455,19 @@ async function handleAPI(request, env, pathname) {
         return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
       }
       next.status = s;
-      if (s === 'inactive') next.inactiveAt = next.inactiveAt ?? Date.now();
-      if (s === 'active') next.inactiveAt = null;
-      if (s === 'deleted') next.deletedAt = next.deletedAt ?? Date.now();
+      const purgeMs = 3 * 24 * 60 * 60 * 1000;
+      if (s === 'active') {
+        next.inactiveAt = null;
+        next.deletedAt = null;
+        next.purgeAfter = null;
+      } else if (s === 'inactive') {
+        next.inactiveAt = next.inactiveAt ?? Date.now();
+        next.deletedAt = null;
+        next.purgeAfter = null;
+      } else if (s === 'deleted') {
+        next.deletedAt = next.deletedAt ?? Date.now();
+        next.purgeAfter = Date.now() + purgeMs;
+      }
     }
 
     if (body?.folderSlug !== undefined) {
@@ -761,6 +771,12 @@ export async function routeRequest(request, env) {
   // For the template/default use-case, we still enforce Basic Auth here as a secure default.
   if (pathname === '/admin' || pathname === '/admin/' || pathname.startsWith('/api/')) {
     if (!env.ADMIN_SECRET) {
+      if ((pathname === '/admin' || pathname === '/admin/') && request.method === 'GET') {
+        return new Response(misconfiguredPage(), {
+          status: 503,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
       return Response.json(
         { error: 'ADMIN_SECRET is not configured. Set it with: npx wrangler secret put ADMIN_SECRET' },
         { status: 503 },

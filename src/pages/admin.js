@@ -454,6 +454,10 @@ export function adminPage(links, origin, allowedHosts = []) {
 const ORIGIN = ${JSON.stringify(origin)};
 const HOSTS = ${JSON.stringify(hosts)};
 
+function jsAttr(val) {
+  return JSON.stringify(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+}
+
 function showToast(msg, isError) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -546,6 +550,19 @@ function copyLink(url) {
   navigator.clipboard.writeText(url)
     .then(() => showToast('Copied: ' + url))
     .catch(() => showToast('Could not copy to clipboard.', true));
+}
+
+/** Rebuild action buttons so slugs in onclick match after rename. */
+function buildLinkRowActionsHtml(host, slug, guest, expiresAtMs, folderSlug, status) {
+  const co = new URL(ORIGIN);
+  const shortUrl = (host === co.host) ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug);
+  const delStyle = (status === 'inactive') ? '' : 'display:none;';
+  return (
+    '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL">📋 Copy</button> ' +
+    '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(expiresAtMs) + ', ' + jsAttr(folderSlug || null) + ')" title="Edit link">✏️ Edit</button> ' +
+    '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Toggle active/inactive">⏸️</button> ' +
+    '<button class="btn btn-sm btn-danger" data-action="schedule-delete" style="' + delStyle + '" onclick="scheduleDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Schedule deletion (3 days)">🗑 Delete</button>'
+  );
 }
 
 async function fetchFolders(host) {
@@ -905,6 +922,12 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
         if (clearPassword) passCell.textContent = '—';
         else if (password) passCell.textContent = '🔒';
       }
+      const actionsCell = row.querySelector('td:last-child');
+      if (actionsCell) {
+        const st = row.dataset.status || 'active';
+        const expMs = expiresAtRaw ? new Date(expiresAtRaw).getTime() : null;
+        actionsCell.innerHTML = buildLinkRowActionsHtml(host, currentSlug, guest, expMs, folderSlug || null, st);
+      }
     }
 
     showToast('Updated: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + currentSlug) : ('https://' + host + '/' + currentSlug)));
@@ -977,11 +1000,6 @@ document.getElementById('createForm').addEventListener('submit', async function(
   tr.dataset.status = 'active';
   tr.dataset.folderSlug = folderSlug || '';
 
-  // Use JSON.stringify to get a safe JS literal, then HTML-encode the quotes
-  // for the onclick attribute value (browser decodes HTML entities before eval).
-  function jsAttr(val) {
-    return JSON.stringify(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  }
   function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
