@@ -95,6 +95,95 @@ async function handleAPI(request, env, pathname) {
     return Response.json({ host, slug, keysToCheck, results, matches });
   }
 
+  // GET /api/debug/getlink?host=...&slug=...
+  // Returns the result of getLink() vs a direct KV get for the canonical key.
+  if (pathname === '/api/debug/getlink' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const host = normalizeHost(url.searchParams.get('host'));
+    const slug = url.searchParams.get('slug');
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+
+    const viaHelper = await getLink(env, host, slug);
+    const canonicalKey = `link:${host}:${slug}`;
+    const raw = await env.LINKIVERSE.get(canonicalKey);
+    let parsedRaw = null;
+    try { parsedRaw = raw ? JSON.parse(raw) : null; } catch { parsedRaw = null; }
+
+    return Response.json({
+      host,
+      slug,
+      canonicalKey,
+      getLinkFound: Boolean(viaHelper),
+      getLinkSample: viaHelper ? JSON.stringify(viaHelper).slice(0, 200) : null,
+      directFound: Boolean(raw),
+      directSample: raw ? raw.slice(0, 200) : null,
+      directParsedSample: parsedRaw ? JSON.stringify(parsedRaw).slice(0, 200) : null,
+    });
+  }
+
+  // GET /api/debug/redirect-lookup?slug=...
+  // Uses the incoming request's host/url like handleRedirect does, then runs getLink().
+  if (pathname === '/api/debug/redirect-lookup' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const slug = url.searchParams.get('slug');
+    if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 });
+    const hostHeader = request.headers.get('host');
+    const computedHost = normalizeHost(hostHeader ?? url.host);
+    const found = await getLink(env, computedHost, slug);
+    return Response.json({
+      slug,
+      hostHeader,
+      urlHost: url.host,
+      computedHost,
+      canonicalKey: `link:${computedHost}:${slug}`,
+      found: Boolean(found),
+      sample: found ? JSON.stringify(found).slice(0, 200) : null,
+    });
+  }
+
+  // POST /api/debug/force-delete?host=...&slug=...
+  // Testing-only endpoint: immediately removes KV entries for a link.
+  // Gated behind FORCE_DELETE_KEY (set locally via .dev.vars and in prod via wrangler secret).
+  //
+  // Provide key via header `x-force-delete-key` OR query param `key` (header recommended).
+  if (pathname === '/api/debug/force-delete' && request.method === 'POST') {
+    if (!env.FORCE_DELETE_KEY) {
+      return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 });
+    }
+
+    const url = new URL(request.url);
+    const host = normalizeHost(url.searchParams.get('host'));
+    const slug = url.searchParams.get('slug');
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+
+    // Check provided key (constant-time compare on sha256)
+    const provided = request.headers.get('x-force-delete-key') ?? url.searchParams.get('key') ?? '';
+    const [providedHash, expectedHash] = await Promise.all([sha256(provided), sha256(env.FORCE_DELETE_KEY)]);
+    if (!safeEqual(providedHash, expectedHash)) {
+      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const before = await getLink(env, host, slug);
+
+    // Delete canonical key + a couple compatibility keys (host without port, and legacy link:{slug})
+    await deleteLink(env, host, slug);
+    const noPort = host.replace(/:\\d+$/, '');
+    if (noPort && noPort !== host) {
+      await env.LINKIVERSE.delete(`link:${noPort}:${slug}`);
+    }
+    await env.LINKIVERSE.delete(`link:${slug}`);
+
+    await writeAudit(env, {
+      action: 'link.forceDelete',
+      host,
+      slug,
+      before,
+      actor,
+    });
+
+    return Response.json({ ok: true, host, slug, existed: Boolean(before) });
+  }
+
   // GET /api/links
   if (pathname === '/api/links' && request.method === 'GET') {
     const links = await getAllLinks(env);
@@ -524,7 +613,30 @@ async function handleRedirect(request, env, slug) {
     });
   }
 
-  const link = await getLink(env, host, slug);
+  let link = await getLink(env, host, slug);
+  if (!link) {
+    // Extra defensive lookup: in local dev we sometimes observe key mismatches despite the expected key existing.
+    // Try a few host candidates directly against KV before giving up.
+    const hostCandidates = [
+      host,
+      normalizeHost(url.host),
+      normalizeHost(hostHeader ?? ''),
+    ].filter(Boolean);
+    for (const h of hostCandidates) {
+      const raw = await env.LINKIVERSE.get(`link:${h}:${slug}`);
+      if (!raw) continue;
+      try {
+        link = JSON.parse(raw);
+      } catch {
+        link = null;
+      }
+      if (link) {
+        // Migrate to canonical key for future reads
+        await putLink(env, h, link);
+        break;
+      }
+    }
+  }
   if (!link) {
     const headers = { 'Content-Type': 'text/html; charset=utf-8' };
     if ((request.headers.get('x-plummer-debug') ?? '') === '1') {
