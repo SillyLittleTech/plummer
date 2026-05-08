@@ -106,13 +106,35 @@ export async function getLink(env, host, slug) {
   // Legacy fallback: if found, migrate to host-scoped key.
   const legacyRaw = await env.LINKIVERSE.get(legacyLinkKey(slug));
   const legacyParsed = await parseJSON(legacyRaw);
-  if (!legacyParsed) return null;
+  if (legacyParsed) {
+    const migrated = { ...legacyParsed, host: h };
+    await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
+    // Remove legacy key to avoid duplicates in listings once migrated.
+    await env.LINKIVERSE.delete(legacyLinkKey(slug));
+    return migrated;
+  }
 
-  const migrated = { ...legacyParsed, host: h };
-  await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
-  // Remove legacy key to avoid duplicates in listings once migrated.
-  await env.LINKIVERSE.delete(legacyLinkKey(slug));
-  return migrated;
+  // Last-resort compatibility: scan existing link records to find a matching {host,slug}.
+  // This handles older key formats and edge-case host encodings in local dev.
+  let cursor;
+  do {
+    const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor });
+    for (const key of page.keys) {
+      const candidate = await parseJSON(await env.LINKIVERSE.get(key.name));
+      if (!candidate) continue;
+      if (String(candidate.slug) !== String(slug)) continue;
+      if (normalizeHost(candidate.host) !== h) continue;
+
+      // Migrate to canonical key and delete the old one.
+      const migrated = { ...candidate, host: h };
+      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
+      if (key.name !== linkKey(h, slug)) await env.LINKIVERSE.delete(key.name);
+      return migrated;
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+
+  return null;
 }
 
 export async function putLink(env, host, link) {
