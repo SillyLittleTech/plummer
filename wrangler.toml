@@ -1,4 +1,4 @@
-# ─── LOCAL TEMPLATE USE IN DEV ───────────────────────────────────────────────
+# ─── CLOUD TEMPLATE USE IN PROD ───────────────────────────────────────────────
 
 
 name = "plummer"
@@ -16,9 +16,9 @@ preview_id = "00410bf2f1054283819de99e7958be89"
 # NOTE: keep this commented for local dev (`wrangler dev`) to avoid confusing host/origin behavior.
 # Uncomment and update to route a custom domain through this worker in production.
 #
-# [[routes]]
-# pattern = "share.sillylittle.tech/*"
-# zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
+[[routes]]
+pattern = "share.sillylittle.tech/*"
+zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
 
 
 # ─── Secrets (set via CLI, NOT in this file) ─────────────────────────────────
@@ -34,7 +34,7 @@ invocation_logs = true
 [vars]
 # JSON array of hostnames allowed for link creation (and shown in the /admin dropdown).
 # Example: ["share.sillylittle.tech","links.sillylittle.tech","links.share.sillylittle.tech"]
-ALLOWED_HOSTS_JSON = "[\"localhost:8787\"]"
+ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\"]"
 
 [triggers]
 crons = ["0 * * * *"]
