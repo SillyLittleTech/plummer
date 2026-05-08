@@ -27,7 +27,7 @@ export function adminPage(links, origin, allowedHosts = []) {
         '<span class="pill pill-danger">Deleted</span>';
 
       const folderSlugAttr = escHtml(link.folderSlug ?? '');
-      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}" data-folderSlug="${folderSlugAttr}">
+      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}">
           <td><code class="slug-code">${escHtml(link.slug)}</code></td>
           <td class="host-cell"><code class="host-code">${escHtml(linkHost)}</code></td>
           <td class="center status-cell">${statusBadge}</td>
