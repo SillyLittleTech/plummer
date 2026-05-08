@@ -15,6 +15,7 @@ import { adminPage } from './pages/admin.js';
 import { homePage } from './pages/home.js';
 import { deletedPage, expiredPage, inactivePage, misconfiguredPage, notFoundPage, passwordPage } from './pages/errors.js';
 import { folderListingPage } from './pages/folders.js';
+import { heartbeatPage } from './pages/heartbeat.js';
 import { checkAdminAuth, unauthorizedResponse } from './security.js';
 import { isValidUrl, safeEqual, sha256 } from './util.js';
 import { getActor, listAudit, writeAudit } from './audit.js';
@@ -799,6 +800,19 @@ export async function routeRequest(request, env) {
   // Admin dashboard
   if ((pathname === '/admin' || pathname === '/admin/') && request.method === 'GET') {
     return handleAdminPage(request, env, origin);
+  }
+
+  // Heartbeat check endpoint
+  if ((pathname === '/heartbeat/check' || pathname === '/heartbeat/check/') && request.method === 'GET') {
+    return new Response(heartbeatPage(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+
+  // Heartbeat redirect endpoint (redirects to /heartbeat/check/)
+  if ((pathname === '/heartbeat' || pathname === '/heartbeat/') && request.method === 'GET') {
+    return Response.redirect(`${origin}/heartbeat/check/`, 301);
   }
 
   // REST API
