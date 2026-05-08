@@ -59,6 +59,42 @@ async function handleAPI(request, env, pathname) {
     return { ok: true };
   }
 
+  // GET /api/debug/link?host=...&slug=...
+  // Temporary debugging helper for KV key issues in dev.
+  if (pathname === '/api/debug/link' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const host = normalizeHost(url.searchParams.get('host'));
+    const slug = url.searchParams.get('slug');
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+
+    const keysToCheck = [
+      `link:${host}:${slug}`,
+      `link:${host.replace(/:\\d+$/, '')}:${slug}`,
+      `link:${slug}`,
+    ];
+
+    const results = {};
+    for (const k of keysToCheck) {
+      const v = await env.LINKIVERSE.get(k);
+      results[k] = v ? { found: true, sample: v.slice(0, 200) } : { found: false };
+    }
+
+    // Also list a few keys containing the slug suffix.
+    const matches = [];
+    let cursor;
+    do {
+      const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor });
+      for (const key of page.keys) {
+        if (key.name.endsWith(`:${slug}`) || key.name === `link:${slug}`) matches.push(key.name);
+        if (matches.length >= 20) break;
+      }
+      if (matches.length >= 20) break;
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+
+    return Response.json({ host, slug, keysToCheck, results, matches });
+  }
+
   // GET /api/links
   if (pathname === '/api/links' && request.method === 'GET') {
     const links = await getAllLinks(env);
