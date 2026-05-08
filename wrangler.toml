@@ -25,3 +25,11 @@ zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+[vars]
+# JSON array of hostnames allowed for link creation (and shown in the /admin dropdown).
+# Example: ["share.sillylittle.tech","links.sillylittle.tech","links.share.sillylittle.tech"]
+ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\"]"
+
+[triggers]
+crons = ["0 * * * *"]
