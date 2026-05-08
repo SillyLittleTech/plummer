@@ -14,8 +14,11 @@ Built for [SillyLittleTech](https://sillylittle.tech) at `share.sillylittle.tech
 | 📊 Click analytics | Per-link click counter in the admin dashboard |
 | 🔒 Password protection | Require a password before redirecting |
 | ⏰ Link expiry | Set an expiry date/time; expired links are cleaned up automatically |
+| 🗂️ Folders | Optional folder pages (e.g. `/referrals/`) that list links |
+| 🧾 Audit log | Tracks create/update/delete events with actor IP |
+| ♻️ Safe deletes | Links are tombstoned and purged automatically after 3 days |
 | 🌙 Dark / light mode | Follows system preference with a manual toggle |
-| 🔑 Admin authentication | HTTP Basic Auth secured by a Wrangler secret |
+| 🔑 Admin authentication | HTTP Basic Auth secured by a Wrangler secret (defense-in-depth even if you use Cloudflare Access) |
 
 ---
 
@@ -28,10 +31,13 @@ Visitor → share.sillylittle.tech/my-link
         → 302 redirect to destination URL
 ```
 
-Links are stored in a Cloudflare KV namespace as JSON values under the key `link:{slug}`:
+Links are stored in a Cloudflare KV namespace as JSON values under a host-scoped key:
+
+- `link:{host}:{slug}` (e.g. `link:share.sillylittle.tech:my-link`)
 
 ```jsonc
 {
+  "host":         "share.sillylittle.tech",
   "slug":         "my-link",
   "guest":        "https://example.com",
   "passwordHash": null,          // SHA-256 of password, or null
@@ -74,32 +80,66 @@ id         = "your-production-namespace-id"
 preview_id = "your-preview-namespace-id"
 ```
 
-### 4. Set the admin password secret
+### Side note: TOML
 
-The admin dashboard is protected by HTTP Basic Auth. Set the password via Wrangler:
+You may have noticed `wrangler.toml` has two cousins, `wrangler.toml.cloud.bac` and `wrangler.toml.local.bac`, This is because when we add a custom domain for production in routes, WRANGLER is really eager to use it, even in dev. 
+Running `npm run toml:toggle` or use `dev` and `prod` to switch between the versions. Make sure you enforce parody!
+
+### 4. Admin authentication
+
+Production recommendation: protect the admin dashboard (`/admin`) at the edge (for
+example, using Cloudflare Access). All `/api/*` routes always require HTTP Basic
+Auth and therefore require `ADMIN_SECRET` to be set.
+
+To enable local Basic Auth instead of an edge solution (for development or if you
+don't have an edge auth configured), uncomment the local auth block in
+[src/router.js](src/router.js#L752-L792) and set the secret:
 
 ```bash
 npx wrangler secret put ADMIN_SECRET
 # → Enter your chosen password when prompted
 ```
 
-When visiting `/admin`, your browser will ask for a username and password.  
-Use **any username** and the password you just set.
+Then enable the local flag (in `.dev.vars` or your environment):
 
-### 5. (Optional) Configure a custom domain
+```
+ADMIN_SECRET=your-local-password
+ENABLE_LOCAL_ADMIN_AUTH=true
+```
+
+When enabled, visiting `/admin` will prompt for Basic Auth (any username + the
+password you set). By default the local auth block is commented out in the code
+to avoid accidental exposure in production—uncomment it only if you intend to
+use local Basic Auth.
+
+### 5. Configure allowed hostnames (multi-domain/subdomain support)
+
+Plummer supports serving and managing links across multiple configured hostnames (domains/subdomains).
+Set `ALLOWED_HOSTS_JSON` in `wrangler.toml` as a JSON array of hostnames:
+
+```toml
+[vars]
+ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\",\"links.sillylittle.tech\",\"links.share.sillylittle.tech\"]"
+```
+
+The `/admin` UI will show these in a dropdown when creating links.
+
+If you leave `ALLOWED_HOSTS_JSON` unset/empty, API writes are **restricted to the current request host** as a safer default.
+
+### 6. (Optional) Configure a custom domain / route
 
 To use a custom domain (e.g. `share.sillylittle.tech`), uncomment and update the
-`[[routes]]` block in `wrangler.toml`:
+`[[routes]]` block in `wrangler.toml` and set the correct `zone_id`:
 
 ```toml
 [[routes]]
-pattern   = "share.sillylittle.tech/*"
-zone_name = "sillylittle.tech"
+pattern = "share.sillylittle.tech/*"
+zone_id = "..."
 ```
 
 The domain must be added to your Cloudflare account and DNS must point to Cloudflare.
 
-### 6. Deploy
+### 7. Deploy
 
 ```bash
 npm run deploy
@@ -111,6 +151,14 @@ For local development:
 ```bash
 npm run dev
 # or: npx wrangler dev
+```
+
+For local dev secrets, you can also use a `.dev.vars` file (Wrangler reads it automatically):
+
+```bash
+ADMIN_SECRET=your-local-password
+ENABLE_DEBUG_ENDPOINTS=true
+FORCE_DELETE_KEY=optional-testing-key
 ```
 
 ---
@@ -138,7 +186,12 @@ Add the following **repository secrets** in your GitHub repo settings
 ```
 plummer/
 ├── src/
-│   └── index.js          # Cloudflare Worker (all routes + HTML templates inline)
+│   ├── index.js          # Worker entrypoint (fetch + scheduled purge)
+│   ├── router.js         # Routing for /admin, /api, redirects, folders, debug endpoints
+│   ├── security.js       # Basic auth + response security headers
+│   ├── kv.js             # KV storage helpers (host-scoped keys)
+│   ├── audit.js          # Audit event storage + listing
+│   └── pages/            # HTML pages (home/admin/errors/folders)
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml    # GitHub Actions → Cloudflare Workers
@@ -157,7 +210,19 @@ All API routes require HTTP Basic Auth (same credentials as the admin dashboard)
 |---|---|---|
 | `GET` | `/api/links` | List all links (JSON array) |
 | `POST` | `/api/links` | Create a new link (JSON body) |
-| `DELETE` | `/api/links/:slug` | Delete a link |
+| `PATCH` | `/api/links/:slug` | Update a link (destination, expiry, folder, password, status) |
+| `POST` | `/api/links/:slug/rename` | Rename a link slug |
+| `DELETE` | `/api/links/:slug?host=...` | Schedule deletion (3-day retention) |
+| `GET` | `/api/folders?host=...` | List folders for a host |
+| `POST` | `/api/folders` | Create folder |
+| `PATCH` | `/api/folders/:slug` | Update folder (name, listingEnabled, password) |
+| `DELETE` | `/api/folders/:slug?host=...` | Delete folder |
+| `GET` | `/api/audit?limit=...` | List recent audit events |
+
+### Debug endpoints (optional)
+
+Debug endpoints are disabled by default. To enable them, set `ENABLE_DEBUG_ENDPOINTS=true`.
+Some debug endpoints may additionally require `FORCE_DELETE_KEY`.
 
 ### Create link — request body
 
