@@ -28,10 +28,13 @@ Visitor → share.sillylittle.tech/my-link
         → 302 redirect to destination URL
 ```
 
-Links are stored in a Cloudflare KV namespace as JSON values under the key `link:{slug}`:
+Links are stored in a Cloudflare KV namespace as JSON values under a host-scoped key:
+
+- `link:{host}:{slug}` (e.g. `link:share.sillylittle.tech:my-link`)
 
 ```jsonc
 {
+  "host":         "share.sillylittle.tech",
   "slug":         "my-link",
   "guest":        "https://example.com",
   "passwordHash": null,          // SHA-256 of password, or null
@@ -98,6 +101,18 @@ zone_name = "sillylittle.tech"
 ```
 
 The domain must be added to your Cloudflare account and DNS must point to Cloudflare.
+
+### 5b. Configure allowed hostnames (multi-domain/subdomain support)
+
+Plummer supports serving and managing links across multiple configured hostnames (domains/subdomains).
+Set `ALLOWED_HOSTS_JSON` in `wrangler.toml` as a JSON array of hostnames:
+
+```toml
+[vars]
+ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\",\"links.sillylittle.tech\",\"links.share.sillylittle.tech\"]"
+```
+
+The `/admin` UI will show these in a dropdown when creating links.
 
 ### 6. Deploy
 
