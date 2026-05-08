@@ -445,8 +445,10 @@ async function handleAPI(request, env, pathname) {
 }
 
 async function handleRedirect(request, env, slug) {
-  const hostHeader = request.headers.get('host') ?? '';
-  const host = normalizeHost(hostHeader);
+  const url = new URL(request.url);
+  // In Workers/Wrangler dev, Host may be absent; fall back to the URL host.
+  const hostHeader = request.headers.get('host');
+  const host = normalizeHost(hostHeader ?? url.host);
 
   const maybeFolder = await getFolder(env, host, slug);
   if (maybeFolder && maybeFolder.listingEnabled !== false) {
