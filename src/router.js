@@ -526,9 +526,16 @@ async function handleRedirect(request, env, slug) {
 
   const link = await getLink(env, host, slug);
   if (!link) {
+    const headers = { 'Content-Type': 'text/html; charset=utf-8' };
+    if ((request.headers.get('x-plummer-debug') ?? '') === '1') {
+      headers['X-Plummer-Debug-HostHeader'] = hostHeader ?? '';
+      headers['X-Plummer-Debug-UrlHost'] = url.host;
+      headers['X-Plummer-Debug-NormalizedHost'] = host;
+      headers['X-Plummer-Debug-Key'] = `link:${host}:${slug}`;
+    }
     return new Response(notFoundPage(), {
       status: 404,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      headers,
     });
   }
 
