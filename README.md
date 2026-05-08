@@ -80,6 +80,11 @@ id         = "your-production-namespace-id"
 preview_id = "your-preview-namespace-id"
 ```
 
+### Side note: TOML
+
+You may have noticed `wrangler.toml` has two cousins, `wrangler.toml.cloud.bac` and `wrangler.toml.local.bac`, This is because when we add a custom domain for production in routes, WRANGLER is really eager to use it, even in dev. 
+Running `npm run toml:toggle` or use `dev` and `prod` to switch between the versions. Make sure you enforce parody!
+
 ### 4. Admin authentication
 
 Production recommendation: protect the admin dashboard (`/admin`) at the edge (for

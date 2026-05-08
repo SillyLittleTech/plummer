@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "toml:toggle": "node scripts/swap-wrangler.mjs",
+    "toml:dev": "node scripts/swap-wrangler.mjs dev",
+    "toml:prod": "node scripts/swap-wrangler.mjs prod"
   },
   "devDependencies": {
     "wrangler": "^4.86.0"
