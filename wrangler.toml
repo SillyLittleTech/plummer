@@ -10,10 +10,12 @@ id = "30fa1d3f69d8412bb79886b862851801"
 preview_id = "00410bf2f1054283819de99e7958be89"
 
 # ─── Custom Domain (optional) ────────────────────────────────────────────────
-# Uncomment and update to route a custom domain through this worker.
-[[routes]]
-pattern = "share.sillylittle.tech/*"
-zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
+# NOTE: keep this commented for local dev (`wrangler dev`) to avoid confusing host/origin behavior.
+# Uncomment and update to route a custom domain through this worker in production.
+#
+# [[routes]]
+# pattern = "share.sillylittle.tech/*"
+# zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
 
 
 # ─── Secrets (set via CLI, NOT in this file) ─────────────────────────────────
