@@ -30,7 +30,21 @@ function folderPrefix(host) {
 
 export async function getFolder(env, host, folderSlug) {
   const h = normalizeHost(host);
-  return parseJSON(await env.LINKIVERSE.get(folderKey(h, folderSlug)));
+  const direct = await parseJSON(await env.LINKIVERSE.get(folderKey(h, folderSlug)));
+  if (direct) return direct;
+
+  // Compatibility: if host includes a port, try the no-port key and migrate.
+  const noPort = h.replace(/:\d+$/, '');
+  if (noPort && noPort !== h) {
+    const legacy = await parseJSON(await env.LINKIVERSE.get(folderKey(noPort, folderSlug)));
+    if (!legacy) return null;
+    const migrated = { ...legacy, host: h };
+    await env.LINKIVERSE.put(folderKey(h, folderSlug), JSON.stringify(migrated));
+    await env.LINKIVERSE.delete(folderKey(noPort, folderSlug));
+    return migrated;
+  }
+
+  return null;
 }
 
 export async function putFolder(env, host, folder) {
@@ -75,6 +89,19 @@ export async function getLink(env, host, slug) {
   const raw = await env.LINKIVERSE.get(linkKey(h, slug));
   const parsed = await parseJSON(raw);
   if (parsed) return parsed;
+
+  // Compatibility: if host includes a port, try the no-port key and migrate.
+  const noPort = h.replace(/:\d+$/, '');
+  if (noPort && noPort !== h) {
+    const legacyPortRaw = await env.LINKIVERSE.get(linkKey(noPort, slug));
+    const legacyPortParsed = await parseJSON(legacyPortRaw);
+    if (legacyPortParsed) {
+      const migrated = { ...legacyPortParsed, host: h };
+      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
+      await env.LINKIVERSE.delete(linkKey(noPort, slug));
+      return migrated;
+    }
+  }
 
   // Legacy fallback: if found, migrate to host-scoped key.
   const legacyRaw = await env.LINKIVERSE.get(legacyLinkKey(slug));
