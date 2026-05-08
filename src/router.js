@@ -51,6 +51,14 @@ async function handleAPI(request, env, pathname) {
   const requestHost = normalizeHost(request.headers.get('host') ?? new URL(request.url).host);
   const debugEnabled = env.ENABLE_DEBUG_ENDPOINTS === true || env.ENABLE_DEBUG_ENDPOINTS === 'true';
 
+  async function requireDebugAccess() {
+    if (!debugEnabled) return { ok: false, response: Response.json({ error: 'Not Found' }, { status: 404 }) };
+    // Defense-in-depth: require Basic Auth even if routing/auth changes later.
+    const ok = await checkAdminAuth(request, env);
+    if (!ok) return { ok: false, response: unauthorizedResponse() };
+    return { ok: true };
+  }
+
   function assertHostAllowed(host) {
     if (!host) return { ok: false, response: Response.json({ error: 'host is required' }, { status: 400 }) };
     if (allowedHosts.length > 0 && !allowedHosts.includes(host)) {
@@ -76,7 +84,8 @@ async function handleAPI(request, env, pathname) {
   // GET /api/debug/link?host=...&slug=...
   // Temporary debugging helper for KV key issues in dev.
   if (pathname === '/api/debug/link' && request.method === 'GET') {
-    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
+    const access = await requireDebugAccess();
+    if (!access.ok) return access.response;
     const url = new URL(request.url);
     const host = normalizeHost(url.searchParams.get('host'));
     const slug = url.searchParams.get('slug');
@@ -113,7 +122,8 @@ async function handleAPI(request, env, pathname) {
   // GET /api/debug/getlink?host=...&slug=...
   // Returns the result of getLink() vs a direct KV get for the canonical key.
   if (pathname === '/api/debug/getlink' && request.method === 'GET') {
-    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
+    const access = await requireDebugAccess();
+    if (!access.ok) return access.response;
     const url = new URL(request.url);
     const host = normalizeHost(url.searchParams.get('host'));
     const slug = url.searchParams.get('slug');
@@ -140,7 +150,8 @@ async function handleAPI(request, env, pathname) {
   // GET /api/debug/redirect-lookup?slug=...
   // Uses the incoming request's host/url like handleRedirect does, then runs getLink().
   if (pathname === '/api/debug/redirect-lookup' && request.method === 'GET') {
-    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
+    const access = await requireDebugAccess();
+    if (!access.ok) return access.response;
     const url = new URL(request.url);
     const slug = url.searchParams.get('slug');
     if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 });
@@ -165,7 +176,8 @@ async function handleAPI(request, env, pathname) {
   //
   // Provide key via header `x-force-delete-key` OR query param `key` (header recommended).
   if (pathname === '/api/debug/force-delete' && request.method === 'POST') {
-    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
+    const access = await requireDebugAccess();
+    if (!access.ok) return access.response;
     if (!env.FORCE_DELETE_KEY) {
       return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 });
     }
