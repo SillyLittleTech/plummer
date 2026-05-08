@@ -15,6 +15,7 @@ import { adminPage } from './pages/admin.js';
 import { homePage } from './pages/home.js';
 import { deletedPage, expiredPage, inactivePage, notFoundPage, passwordPage } from './pages/errors.js';
 import { folderListingPage } from './pages/folders.js';
+import { checkAdminAuth, unauthorizedResponse } from './security.js';
 import { isValidUrl, safeEqual, sha256 } from './util.js';
 import { getActor, listAudit, writeAudit } from './audit.js';
 
@@ -47,6 +48,8 @@ async function handleAdminPage(_request, env, origin) {
 async function handleAPI(request, env, pathname) {
   const allowedHosts = getAllowedHosts(env);
   const actor = getActor(request);
+  const requestHost = normalizeHost(request.headers.get('host') ?? new URL(request.url).host);
+  const debugEnabled = env.ENABLE_DEBUG_ENDPOINTS === true || env.ENABLE_DEBUG_ENDPOINTS === 'true';
 
   function assertHostAllowed(host) {
     if (!host) return { ok: false, response: Response.json({ error: 'host is required' }, { status: 400 }) };
@@ -56,12 +59,24 @@ async function handleAPI(request, env, pathname) {
         response: Response.json({ error: `"${host}" is not an allowed host` }, { status: 400 }),
       };
     }
+    // Safer default: if no allowlist is configured, only allow the current request host.
+    // This prevents creating/updating records under arbitrary host-scoped keys.
+    if (allowedHosts.length === 0 && host !== requestHost) {
+      return {
+        ok: false,
+        response: Response.json(
+          { error: `Host "${host}" is not allowed (no ALLOWED_HOSTS_JSON configured; expected "${requestHost}")` },
+          { status: 400 },
+        ),
+      };
+    }
     return { ok: true };
   }
 
   // GET /api/debug/link?host=...&slug=...
   // Temporary debugging helper for KV key issues in dev.
   if (pathname === '/api/debug/link' && request.method === 'GET') {
+    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
     const url = new URL(request.url);
     const host = normalizeHost(url.searchParams.get('host'));
     const slug = url.searchParams.get('slug');
@@ -98,6 +113,7 @@ async function handleAPI(request, env, pathname) {
   // GET /api/debug/getlink?host=...&slug=...
   // Returns the result of getLink() vs a direct KV get for the canonical key.
   if (pathname === '/api/debug/getlink' && request.method === 'GET') {
+    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
     const url = new URL(request.url);
     const host = normalizeHost(url.searchParams.get('host'));
     const slug = url.searchParams.get('slug');
@@ -124,6 +140,7 @@ async function handleAPI(request, env, pathname) {
   // GET /api/debug/redirect-lookup?slug=...
   // Uses the incoming request's host/url like handleRedirect does, then runs getLink().
   if (pathname === '/api/debug/redirect-lookup' && request.method === 'GET') {
+    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
     const url = new URL(request.url);
     const slug = url.searchParams.get('slug');
     if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 });
@@ -144,9 +161,11 @@ async function handleAPI(request, env, pathname) {
   // POST /api/debug/force-delete?host=...&slug=...
   // Testing-only endpoint: immediately removes KV entries for a link.
   // Gated behind FORCE_DELETE_KEY (set locally via .dev.vars and in prod via wrangler secret).
+  // Also requires ENABLE_DEBUG_ENDPOINTS=true to avoid accidental exposure in production.
   //
   // Provide key via header `x-force-delete-key` OR query param `key` (header recommended).
   if (pathname === '/api/debug/force-delete' && request.method === 'POST') {
+    if (!debugEnabled) return Response.json({ error: 'Not Found' }, { status: 404 });
     if (!env.FORCE_DELETE_KEY) {
       return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 });
     }
@@ -607,13 +626,14 @@ async function handleRedirect(request, env, slug) {
     const links = (await listLinksByFolder(env, host, maybeFolder.slug))
       .filter((l) => (l.status ?? 'active') === 'active');
 
-    return new Response(folderListingPage({ host, folder: maybeFolder, links }), {
+    return new Response(folderListingPage({ origin: url.origin, host, folder: maybeFolder, links }), {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   }
 
   let link = await getLink(env, host, slug);
+  let resolvedHost = host;
   if (!link) {
     // Extra defensive lookup: in local dev we sometimes observe key mismatches despite the expected key existing.
     // Try a few host candidates directly against KV before giving up.
@@ -633,6 +653,7 @@ async function handleRedirect(request, env, slug) {
       if (link) {
         // Migrate to canonical key for future reads
         await putLink(env, h, link);
+        resolvedHost = h;
         break;
       }
     }
@@ -667,7 +688,7 @@ async function handleRedirect(request, env, slug) {
   // Check link expiry
   if (link.expiresAt && Date.now() > link.expiresAt) {
     // Clean up the expired link from KV
-    await deleteLink(env, host, slug);
+    await deleteLink(env, resolvedHost, slug);
     return new Response(expiredPage(), {
       status: 410,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -706,7 +727,7 @@ async function handleRedirect(request, env, slug) {
   // Increment click counter (best-effort; do not block the redirect)
   const updated = { ...link, clicks: (link.clicks ?? 0) + 1 };
   // Use waitUntil if available to avoid delaying the response
-  env.ctx?.waitUntil(putLink(env, host, updated));
+  env.ctx?.waitUntil(putLink(env, resolvedHost, updated));
 
   return Response.redirect(link.guest, 302);
 }
@@ -719,6 +740,22 @@ export async function routeRequest(request, env) {
   // Homepage
   if (pathname === '/' && request.method === 'GET') {
     return handleHomePage(origin);
+  }
+
+  // Admin + API authentication.
+  //
+  // NOTE: In some production setups, `/admin` is protected at the edge (e.g. Cloudflare Access),
+  // and authentication is enforced at the domain level instead of inside the Worker.
+  // For the template/default use-case, we still enforce Basic Auth here as a secure default.
+  if (pathname === '/admin' || pathname === '/admin/' || pathname.startsWith('/api/')) {
+    if (!env.ADMIN_SECRET) {
+      return Response.json(
+        { error: 'ADMIN_SECRET is not configured. Set it with: npx wrangler secret put ADMIN_SECRET' },
+        { status: 503 },
+      );
+    }
+    const ok = await checkAdminAuth(request, env);
+    if (!ok) return unauthorizedResponse();
   }
 
   // Admin dashboard

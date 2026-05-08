@@ -76,6 +76,8 @@ export async function listFolders(env, host) {
 
 export async function listLinksByFolder(env, host, folderSlug) {
   const h = normalizeHost(host);
+  // NOTE: This currently scans all links and filters in memory.
+  // If folder listings become high-traffic, consider maintaining a folder index/prefix to avoid full scans.
   const all = await getAllLinks(env);
   return all.filter((l) => normalizeHost(l.host) === h && (l.folderSlug ?? null) === folderSlug);
 }

@@ -10,8 +10,14 @@ function auditKey(ts, id) {
 }
 
 function randomId() {
-  // short, URL-safe
-  return Math.random().toString(36).slice(2, 10);
+  // short, URL-safe (avoid Math.random predictability/collisions)
+  try {
+    return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  } catch {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
 }
 
 export function getActor(request) {
@@ -35,23 +41,28 @@ export async function writeAudit(env, event) {
 }
 
 export async function listAudit(env, { limit = 100 } = {}) {
-  const items = [];
+  const keysWindow = [];
+  const windowSize = Math.max(200, Math.min(1000, limit * 5));
   let cursor;
   do {
     const page = await env.LINKIVERSE.list({ prefix: 'audit:', limit: 100, cursor });
     for (const key of page.keys) {
-      const raw = await env.LINKIVERSE.get(key.name);
-      if (!raw) continue;
-      try {
-        items.push(JSON.parse(raw));
-      } catch {
-        // ignore
-      }
-      if (items.length >= limit) break;
+      keysWindow.push(key.name);
+      if (keysWindow.length > windowSize) keysWindow.shift();
     }
-    if (items.length >= limit) break;
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
+
+  const items = [];
+  for (const name of keysWindow) {
+    const raw = await env.LINKIVERSE.get(name);
+    if (!raw) continue;
+    try {
+      items.push(JSON.parse(raw));
+    } catch {
+      // ignore
+    }
+  }
 
   items.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
   return items.slice(0, limit);

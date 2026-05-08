@@ -7,7 +7,7 @@ export function adminPage(links, origin, allowedHosts = []) {
     : [new URL(origin).host];
 
   const rows = links.length === 0
-    ? `<tr><td colspan="6" class="empty-row">No links yet — create one above!</td></tr>`
+    ? `<tr><td colspan="8" class="empty-row">No links yet — create one above!</td></tr>`
     : links.map((link) => {
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
@@ -26,7 +26,8 @@ export function adminPage(links, origin, allowedHosts = []) {
         status === 'inactive' ? '<span class="pill pill-warn">Inactive</span>' :
         '<span class="pill pill-danger">Deleted</span>';
 
-      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}">
+      const folderSlugAttr = escHtml(link.folderSlug ?? '');
+      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}" data-folderSlug="${folderSlugAttr}">
           <td><code class="slug-code">${escHtml(link.slug)}</code></td>
           <td class="host-cell"><code class="host-code">${escHtml(linkHost)}</code></td>
           <td class="center status-cell">${statusBadge}</td>
@@ -35,7 +36,7 @@ export function adminPage(links, origin, allowedHosts = []) {
                title="${escHtml(link.guest)}">${escHtml(link.guest)}</a>
           </td>
           <td class="center">${link.clicks ?? 0}</td>
-          <td class="center">${link.passwordHash ? '🔒' : '—'}</td>
+          <td class="center pass-cell">${link.passwordHash ? '🔒' : '—'}</td>
           <td class="center nowrap">${expiry}</td>
           <td class="center nowrap">
             <button class="btn btn-sm btn-secondary"
@@ -80,7 +81,7 @@ export function adminPage(links, origin, allowedHosts = []) {
           <select class="select" id="folderSlug" name="folderSlug">
             <option value="">— None —</option>
           </select>
-          <p class="hint">Folders create reserved directory URLs (e.g. /referals/).</p>
+          <p class="hint">Folders create reserved directory URLs (e.g. /referrals/).</p>
         </div>
         <div class="form-group">
           <label for="slug">Slug</label>
@@ -554,8 +555,18 @@ async function fetchFolders(host) {
 }
 
 function renderFolderOptions(selectEl, folders) {
-  selectEl.innerHTML = '<option value=\"\">— None —</option>' +
-    folders.map((f) => '<option value=\"' + String(f.slug).replace(/\"/g,'&quot;') + '\">' + String(f.name || f.slug).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>').join('');
+  if (!selectEl) return;
+  selectEl.textContent = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = '— None —';
+  selectEl.appendChild(empty);
+  (folders || []).forEach((f) => {
+    const opt = document.createElement('option');
+    opt.value = String(f.slug ?? '');
+    opt.textContent = String((f.name || f.slug) ?? '');
+    selectEl.appendChild(opt);
+  });
 }
 
 function renderFolderSidebar(folders) {
@@ -888,7 +899,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
           ? new Date(new Date(expiresAtRaw).getTime()).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
           : '—';
       }
-      const passCell = row.querySelectorAll('td.center')[3];
+      const passCell = row.querySelector('.pass-cell');
       if (passCell) {
         // If user entered a password, show lock. If cleared, show dash. Otherwise unchanged.
         if (clearPassword) passCell.textContent = '—';
@@ -981,13 +992,13 @@ document.getElementById('createForm').addEventListener('submit', async function(
     '<td class="center status-cell"><span class="pill pill-ok">Active</span></td>' +
     '<td class="url-cell"><a href="' + esc(guest) + '" target="_blank" rel="noopener" title="' + esc(guest) + '">' + esc(guest) + '</a></td>' +
     '<td class="center">0</td>' +
-    '<td class="center">' + (body.password ? '🔒' : '—') + '</td>' +
+    '<td class="center pass-cell">' + (body.password ? '🔒' : '—') + '</td>' +
     '<td class="center nowrap">' + esc(expiryText) + '</td>' +
     '<td class="center nowrap">' +
       '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL">📋 Copy</button> ' +
       '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(body.expiresAt) + ', ' + jsAttr(folderSlug || null) + ')" title="Edit link">✏️ Edit</button> ' +
       '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Toggle active/inactive">⏸️</button> ' +
-      '' +
+      '<button class="btn btn-sm btn-danger" data-action="schedule-delete" style="display:none;" onclick="scheduleDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Schedule deletion (3 days)">🗑 Delete</button>' +
     '</td>';
   tbody.insertBefore(tr, tbody.firstChild);
 

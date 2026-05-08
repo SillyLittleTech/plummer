@@ -1,14 +1,16 @@
 import { htmlPage } from './shared.js';
 import { escHtml } from '../util.js';
 
-export function folderListingPage({ host, folder, links }) {
+export function folderListingPage({ origin, host, folder, links }) {
   const title = folder?.name ? `${folder.name} — Plummer` : 'Folder — Plummer';
   const safeName = folder?.name ? escHtml(folder.name) : escHtml(folder?.slug ?? 'Folder');
+  const base = new URL(origin);
+  base.host = host;
 
   const rows = links.length === 0
     ? `<tr><td colspan="4" class="empty-row">No links in this folder yet.</td></tr>`
     : links.map((link) => {
-      const shortUrl = `https://${host}/${link.slug}`;
+      const shortUrl = `${base.origin}/${link.slug}`;
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
         : '—';

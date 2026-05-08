@@ -1,4 +1,5 @@
 // Shared HTML/CSS primitives used by all pages.
+import { escHtml } from '../util.js';
 
 // ─── Shared CSS (based on SillyLittleTech lander / pasCurtain) ──────────────
 const SHARED_CSS = `
@@ -197,12 +198,13 @@ const TOGGLE_BTN = `<button class="theme-toggle" id="themeToggle" aria-label="To
 
 // ─── HTML page wrapper ───────────────────────────────────────────────────────
 export function htmlPage(title, bodyContent, extraCss = '', extraScript = '') {
+  const safeTitle = escHtml(title ?? '');
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${safeTitle}</title>
   <script>(function(){try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
