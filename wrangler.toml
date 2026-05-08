@@ -29,7 +29,7 @@ invocation_logs = true
 [vars]
 # JSON array of hostnames allowed for link creation (and shown in the /admin dropdown).
 # Example: ["share.sillylittle.tech","links.sillylittle.tech","links.share.sillylittle.tech"]
-ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\"]"
+ALLOWED_HOSTS_JSON = "[\"localhost:8787\",\"share.sillylittle.tech\"]"
 
 [triggers]
 crons = ["0 * * * *"]

@@ -415,45 +415,30 @@ async function handleAPI(request, env, pathname) {
     const host = normalizeHost(url.searchParams.get('host'));
     const hostCheck = assertHostAllowed(host);
     if (!hostCheck.ok) return hostCheck.response;
-    const permanent = url.searchParams.get('permanent') === '1';
 
     const existing = await getLink(env, host, slug);
     if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
-    if (permanent) {
-      // Tombstone for 3 days before actual purge (handled by scheduled job)
-      const next = {
-        ...existing,
-        status: 'deleted',
-        deletedAt: existing.deletedAt ?? Date.now(),
-        purgeAfter: Date.now() + 3 * 24 * 60 * 60 * 1000,
-      };
-      await putLink(env, host, next);
-      env.ctx?.waitUntil(writeAudit(env, {
-        action: 'link.delete.permanent_requested',
-        host,
-        slug,
-        before: existing,
-        after: next,
-        actor,
-      }));
-      return Response.json({ message: 'Deletion scheduled (3-day retention)' });
+    if ((existing.status ?? 'active') !== 'inactive') {
+      return Response.json({ error: 'Link must be inactive before deletion can be scheduled' }, { status: 400 });
     }
 
+    // Always schedule purge for 3 days; no manual hard-delete.
     const next = {
       ...existing,
       status: 'deleted',
       deletedAt: existing.deletedAt ?? Date.now(),
+      purgeAfter: Date.now() + 3 * 24 * 60 * 60 * 1000,
     };
     await putLink(env, host, next);
     env.ctx?.waitUntil(writeAudit(env, {
-      action: 'link.delete',
+      action: 'link.delete.scheduled',
       host,
       slug,
       before: existing,
       after: next,
       actor,
     }));
-    return Response.json({ message: 'Deleted' });
+    return Response.json({ message: 'Deletion scheduled (3-day retention)' });
   }
 
   return Response.json({ error: 'API route not found' }, { status: 404 });

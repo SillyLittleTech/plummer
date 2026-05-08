@@ -8,9 +8,8 @@ async function parseJSON(raw) {
 }
 
 export function normalizeHost(rawHost) {
-  const host = String(rawHost ?? '').trim().toLowerCase();
-  // Strip port if present (e.g. localhost:8787)
-  return host.replace(/:\d+$/, '');
+  // IMPORTANT: keep ports. For local dev we need exact Host header matching (e.g. localhost:8787).
+  return String(rawHost ?? '').trim().toLowerCase();
 }
 
 function linkKey(host, slug) {

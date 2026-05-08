@@ -12,8 +12,12 @@ export function adminPage(links, origin, allowedHosts = []) {
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
         : '—';
-      const linkHost = link.host ? String(link.host) : new URL(origin).host;
-      const shortUrl = `https://${linkHost}/${link.slug}`;
+      const currentOrigin = new URL(origin);
+      const currentHost = currentOrigin.host;
+      const linkHost = link.host ? String(link.host) : currentHost;
+      const shortUrl = (linkHost === currentHost)
+        ? `${origin}/${link.slug}`
+        : `https://${linkHost}/${link.slug}`;
       const guestJs = escHtml(JSON.stringify(link.guest ?? ''));
       const expiresAtJs = escHtml(JSON.stringify(link.expiresAt ?? null));
       const status = link.status || 'active';
@@ -38,17 +42,15 @@ export function adminPage(links, origin, allowedHosts = []) {
               onclick="copyLink(${escHtml(JSON.stringify(shortUrl))})"
               title="Copy short URL">📋 Copy</button>
             <button class="btn btn-sm btn-secondary"
-              onclick="openEditModal(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))}, ${guestJs}, ${expiresAtJs})"
+              onclick="openEditModal(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))}, ${guestJs}, ${expiresAtJs}, ${escHtml(JSON.stringify(link.folderSlug ?? null))})"
               title="Edit link">✏️ Edit</button>
             <button class="btn btn-sm btn-secondary"
               onclick="toggleInactive(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
               title="Toggle active/inactive">⏸️</button>
-            <button class="btn btn-sm btn-danger"
-              onclick="softDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
-              title="Delete (soft)">🗑</button>
-            <button class="btn btn-sm btn-danger"
-              onclick="permanentDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
-              title="Delete permanently">💥</button>
+            <button class="btn btn-sm btn-danger" data-action="schedule-delete"
+              style="${status === 'inactive' ? '' : 'display:none;'}"
+              onclick="scheduleDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
+              title="Schedule deletion (3 days)">🗑 Delete</button>
           </td>
         </tr>`;
     }).join('');
@@ -72,6 +74,13 @@ export function adminPage(links, origin, allowedHosts = []) {
             ${hosts.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join('')}
           </select>
           <p class="hint">Choose which configured domain/subdomain this link belongs to.</p>
+        </div>
+        <div class="form-group">
+          <label for="folderSlug">Folder <span class="opt">(optional)</span></label>
+          <select class="select" id="folderSlug" name="folderSlug">
+            <option value="">— None —</option>
+          </select>
+          <p class="hint">Folders create reserved directory URLs (e.g. /referals/).</p>
         </div>
         <div class="form-group">
           <label for="slug">Slug</label>
@@ -113,6 +122,13 @@ export function adminPage(links, origin, allowedHosts = []) {
 
   <section class="card links-card" aria-label="All short links">
     <h2>All Links <span class="badge" id="linkCount">${links.length}</span></h2>
+    <div style="margin:-6px 0 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <label style="display:flex; align-items:center; gap:10px; font-weight:700; font-size:13px; opacity:0.9;">
+        <input type="checkbox" id="showDeletedToggle" />
+        Show deleted (last 3 days)
+      </label>
+      <span class="hint" style="margin:0;">Deleted links purge automatically after 3 days.</span>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -129,6 +145,83 @@ export function adminPage(links, origin, allowedHosts = []) {
         </thead>
         <tbody id="linksBody">
           ${rows}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card folders-card" aria-label="Folders">
+    <h2>Folders</h2>
+    <form id="folderCreateForm" novalidate style="margin-bottom:14px;">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="folderHost">Domain</label>
+          <select class="select" id="folderHost" name="host" required>
+            ${hosts.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join('')}
+          </select>
+          <p class="hint">Folders are per-domain.</p>
+        </div>
+        <div class="form-group">
+          <label for="folderSlugCreate">Folder slug</label>
+          <input class="input" type="text" id="folderSlugCreate" name="slug"
+            placeholder="referals" pattern="[a-zA-Z0-9_-]+" required autocomplete="off" spellcheck="false" />
+          <p class="hint">Becomes a reserved path like <code>/{slug}/</code>.</p>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="folderNameCreate">Name</label>
+          <input class="input" type="text" id="folderNameCreate" name="name" placeholder="Referrals" />
+        </div>
+        <div class="form-group">
+          <label for="folderPasswordCreate">Password <span class="opt">(optional)</span></label>
+          <input class="input" type="password" id="folderPasswordCreate" name="password"
+            placeholder="Leave blank for none" autocomplete="new-password" />
+          <p class="hint">If set, visitors must enter it to view the folder listing.</p>
+        </div>
+      </div>
+      <label style="display:flex; align-items:center; gap:10px; font-weight:700; font-size:13px; opacity:0.9;">
+        <input type="checkbox" id="folderListingEnabledCreate" checked />
+        Listing enabled
+      </label>
+      <div id="folderFormError" class="alert alert-error" style="display:none; margin-top:12px;"></div>
+      <button type="submit" class="btn btn-secondary" style="margin-top:12px;">Create Folder</button>
+    </form>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Slug</th>
+            <th>Name</th>
+            <th class="center">Listing</th>
+            <th class="center">Password</th>
+            <th class="center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="foldersBody">
+          <tr><td colspan="5" class="empty-row">No folders yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card audit-card" aria-label="Audit log">
+    <h2>Audit</h2>
+    <p class="hint" style="margin-top:-10px; margin-bottom:12px;">Recent create/modify/delete events with actor IP.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Action</th>
+            <th>Host</th>
+            <th>Target</th>
+            <th class="center">IP</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody">
+          <tr><td colspan="5" class="empty-row">Loading audit…</td></tr>
         </tbody>
       </table>
     </div>
@@ -163,6 +256,14 @@ export function adminPage(links, origin, allowedHosts = []) {
         <div class="form-group">
           <label for="editGuest">Destination URL</label>
           <input class="input" type="url" id="editGuest" name="guest" required />
+        </div>
+
+        <div class="form-group">
+          <label for="editFolderSlug">Folder <span class="opt">(optional)</span></label>
+          <select class="select" id="editFolderSlug" name="folderSlug">
+            <option value="">— None —</option>
+          </select>
+          <p class="hint">Assign this link to a folder directory URL.</p>
         </div>
 
         <div class="form-row">
@@ -307,6 +408,7 @@ export function adminPage(links, origin, allowedHosts = []) {
     /* extra script */
     `
 const ORIGIN = ${JSON.stringify(origin)};
+const HOSTS = ${JSON.stringify(hosts)};
 
 function showToast(msg, isError) {
   const t = document.getElementById('toast');
@@ -339,6 +441,20 @@ function setRowStatus(host, slug, status) {
     status === 'active' ? '<span class="pill pill-ok">Active</span>' :
     status === 'inactive' ? '<span class="pill pill-warn">Inactive</span>' :
     '<span class="pill pill-danger">Deleted</span>';
+
+  // Ensure delete button visibility matches status rules
+  const delBtn = row.querySelector('[data-action=\"schedule-delete\"]');
+  if (delBtn) delBtn.style.display = status === 'inactive' ? '' : 'none';
+}
+
+let SHOW_DELETED = false;
+function applyRowVisibility() {
+  const rows = document.querySelectorAll('#linksBody tr[data-status]');
+  for (const row of rows) {
+    const s = row.dataset.status || 'active';
+    if (s === 'deleted' && !SHOW_DELETED) row.style.display = 'none';
+    else row.style.display = '';
+  }
 }
 
 async function toggleInactive(host, slug) {
@@ -354,33 +470,15 @@ async function toggleInactive(host, slug) {
   }
 }
 
-async function softDeleteLink(host, slug) {
-  if (!confirm('Mark ' + host + '/' + slug + ' as deleted? (You can permanently delete after)')) return;
-  try {
-    await setStatus(host, slug, 'deleted');
-    setRowStatus(host, slug, 'deleted');
-    showToast('Deleted (soft): ' + host + '/' + slug);
-  } catch (e) {
-    showToast('Error: ' + (e.message || 'Unknown error'), true);
-  }
-}
-
-async function permanentDeleteLink(host, slug) {
-  if (!confirm('Permanently delete ' + host + '/' + slug + '? This removes it from KV immediately.')) return;
-  const r = await fetch(
-    '/api/links/' + encodeURIComponent(slug) + '?host=' + encodeURIComponent(host) + '&permanent=1',
-    { method: 'DELETE' },
-  );
+async function scheduleDeleteLink(host, slug) {
+  if (!confirm('Schedule deletion for ' + host + '/' + slug + '? It will be removed automatically after 3 days.')) return;
+  const r = await fetch('/api/links/' + encodeURIComponent(slug) + '?host=' + encodeURIComponent(host), {
+    method: 'DELETE',
+  });
   if (r.ok) {
-    showToast('Deleted permanently: ' + host + '/' + slug);
-    const row = document.querySelector('[data-slug="' + slug + '"][data-host="' + host + '"]');
-    if (row) row.remove();
-    const badge = document.getElementById('linkCount');
-    if (badge) badge.textContent = parseInt(badge.textContent || '0', 10) - 1;
-    const tbody = document.getElementById('linksBody');
-    if (tbody && tbody.rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No links yet — create one above!</td></tr>';
-    }
+    showToast('Deletion scheduled: ' + host + '/' + slug);
+    setRowStatus(host, slug, 'deleted');
+    applyRowVisibility();
   } else {
     const d = await r.json().catch(() => ({}));
     showToast('Error: ' + (d.error || 'Unknown error'), true);
@@ -392,6 +490,139 @@ function copyLink(url) {
     .then(() => showToast('Copied: ' + url))
     .catch(() => showToast('Could not copy to clipboard.', true));
 }
+
+async function fetchFolders(host) {
+  const r = await fetch('/api/folders?host=' + encodeURIComponent(host));
+  if (!r.ok) return [];
+  return await r.json().catch(() => ([]));
+}
+
+function renderFolderOptions(selectEl, folders) {
+  selectEl.innerHTML = '<option value=\"\">— None —</option>' +
+    folders.map((f) => '<option value=\"' + String(f.slug).replace(/\"/g,'&quot;') + '\">' + String(f.name || f.slug).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>').join('');
+}
+
+function renderFoldersTable(folders) {
+  const tbody = document.getElementById('foldersBody');
+  if (!folders || folders.length === 0) {
+    tbody.innerHTML = '<tr><td colspan=\"5\" class=\"empty-row\">No folders yet.</td></tr>';
+    return;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  tbody.innerHTML = folders.map((f) => {
+    const listing = f.listingEnabled === false ? 'Off' : 'On';
+    const pass = f.passwordHash ? '🔒' : '—';
+    return '<tr data-folder-slug=\"' + esc(f.slug) + '\">' +
+      '<td><code class=\"slug-code\">' + esc(f.slug) + '</code></td>' +
+      '<td>' + esc(f.name || f.slug) + '</td>' +
+      '<td class=\"center\">' + esc(listing) + '</td>' +
+      '<td class=\"center\">' + pass + '</td>' +
+      '<td class=\"center nowrap\">' +
+        '<button class=\"btn btn-sm btn-danger\" onclick=\"deleteFolder(\\'' + esc(document.getElementById('folderHost').value) + '\\', \\'' + esc(f.slug) + '\\')\">🗑</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+async function refreshFoldersForHost(host) {
+  const folders = await fetchFolders(host);
+  renderFolderOptions(document.getElementById('folderSlug'), folders);
+  renderFolderOptions(document.getElementById('editFolderSlug'), folders);
+  renderFoldersTable(folders);
+}
+
+async function deleteFolder(host, slug) {
+  if (!confirm('Delete folder ' + host + '/' + slug + '?')) return;
+  const r = await fetch('/api/folders/' + encodeURIComponent(slug) + '?host=' + encodeURIComponent(host), { method: 'DELETE' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return showToast('Error: ' + (d.error || 'Unknown error'), true);
+  showToast('Folder deleted: ' + slug);
+  await refreshFoldersForHost(host);
+}
+
+async function fetchAudit(limit) {
+  const r = await fetch('/api/audit?limit=' + encodeURIComponent(limit || 100));
+  if (!r.ok) return [];
+  return await r.json().catch(() => ([]));
+}
+
+function renderAuditTable(items) {
+  const tbody = document.getElementById('auditBody');
+  if (!tbody) return;
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan=\"5\" class=\"empty-row\">No audit events yet.</td></tr>';
+    return;
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  tbody.innerHTML = items.map((e) => {
+    const ts = e.timestamp ? new Date(e.timestamp).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
+    const action = e.action || '—';
+    const host = e.host || '—';
+    const target = e.slug ? ('/' + e.slug) : (e.folderSlug ? ('folder:' + e.folderSlug) : '—');
+    const ip = e.actor && e.actor.ip ? e.actor.ip : '—';
+    return '<tr>' +
+      '<td class=\"nowrap\">' + esc(ts) + '</td>' +
+      '<td>' + esc(action) + '</td>' +
+      '<td><code class=\"host-code\">' + esc(host) + '</code></td>' +
+      '<td><code>' + esc(target) + '</code></td>' +
+      '<td class=\"center nowrap\">' + esc(ip) + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+async function refreshAudit() {
+  const items = await fetchAudit(150);
+  renderAuditTable(items);
+}
+
+document.getElementById('host').addEventListener('change', async (e) => {
+  const host = e.target.value;
+  // keep folder host selector in sync by default
+  const fh = document.getElementById('folderHost');
+  if (fh && fh.value !== host && HOSTS.includes(host)) fh.value = host;
+  await refreshFoldersForHost(host);
+});
+
+document.getElementById('folderHost').addEventListener('change', async (e) => {
+  await refreshFoldersForHost(e.target.value);
+});
+
+document.getElementById('folderCreateForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('folderFormError');
+  errEl.style.display = 'none';
+  const host = document.getElementById('folderHost').value.trim();
+  const slug = document.getElementById('folderSlugCreate').value.trim();
+  const name = document.getElementById('folderNameCreate').value.trim();
+  const password = document.getElementById('folderPasswordCreate').value;
+  const listingEnabled = document.getElementById('folderListingEnabledCreate').checked;
+
+  const r = await fetch('/api/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ host, slug, name, password: password || null, listingEnabled }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    errEl.textContent = d.error || 'Failed to create folder.';
+    errEl.style.display = '';
+    return;
+  }
+  showToast('Folder created: ' + slug);
+  document.getElementById('folderSlugCreate').value = '';
+  document.getElementById('folderNameCreate').value = '';
+  document.getElementById('folderPasswordCreate').value = '';
+  document.getElementById('folderListingEnabledCreate').checked = true;
+  await refreshFoldersForHost(host);
+});
 
 // --- Edit modal helpers ---
 function isoToDatetimeLocal(iso) {
@@ -413,7 +644,7 @@ function closeEditModal() {
   backdrop.classList.remove('show');
 }
 
-function openEditModal(host, slug, guest, expiresAt) {
+function openEditModal(host, slug, guest, expiresAt, folderSlug) {
   const backdrop = document.getElementById('editBackdrop');
   backdrop.classList.add('show');
   document.getElementById('editHost').value = host;
@@ -421,12 +652,25 @@ function openEditModal(host, slug, guest, expiresAt) {
   document.getElementById('editSlug').value = slug;
   document.getElementById('editGuest').value = guest || '';
   document.getElementById('editExpiresAt').value = msToDatetimeLocal(expiresAt);
+  document.getElementById('editFolderSlug').value = folderSlug || '';
   document.getElementById('editPassword').value = '';
   document.getElementById('editClearPassword').checked = false;
   const err = document.getElementById('editError');
   err.style.display = 'none';
   err.textContent = '';
 }
+
+document.getElementById('showDeletedToggle').addEventListener('change', (e) => {
+  SHOW_DELETED = !!e.target.checked;
+  applyRowVisibility();
+});
+
+// Initial hide of deleted rows
+document.addEventListener('DOMContentLoaded', () => {
+  refreshFoldersForHost(document.getElementById('host').value);
+  refreshAudit();
+  applyRowVisibility();
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeEditModal();
@@ -456,6 +700,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
   const newSlug = document.getElementById('editSlug').value.trim();
   const guest = document.getElementById('editGuest').value.trim();
   const expiresAtRaw = document.getElementById('editExpiresAt').value;
+  const folderSlug = document.getElementById('editFolderSlug').value.trim();
   const password = document.getElementById('editPassword').value;
   const clearPassword = document.getElementById('editClearPassword').checked;
 
@@ -491,6 +736,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
       guest,
       expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
     };
+    patchBody.folderSlug = folderSlug || null;
     if (clearPassword) patchBody.password = null;
     else if (password) patchBody.password = password;
 
@@ -525,7 +771,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
       }
     }
 
-    showToast('Updated: https://' + host + '/' + currentSlug);
+    showToast('Updated: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + currentSlug) : ('https://' + host + '/' + currentSlug)));
     closeEditModal();
   } catch (err) {
     errEl.textContent = err.message || 'Failed to update link.';
@@ -544,6 +790,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const host = fd.get('host').trim();
   const slug = fd.get('slug').trim();
   const guest = fd.get('guest').trim();
+  const folderSlug = (fd.get('folderSlug') || '').trim();
   const expiresAtRaw = fd.get('expiresAt');
   const password = fd.get('password');
 
@@ -551,6 +798,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
     host,
     slug,
     guest,
+    folderSlug: folderSlug || null,
     expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
     password: password || null,
   };
@@ -574,7 +822,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
     return;
   }
 
-  showToast('Created: https://' + host + '/' + slug);
+  showToast('Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug)));
   e.target.reset();
 
   // Add row to table
@@ -586,11 +834,12 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const expiryText = body.expiresAt
     ? new Date(body.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
     : '—';
-  const shortUrl = 'https://' + host + '/' + slug;
+  const shortUrl = (host === new URL(ORIGIN).host) ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug);
   const tr = document.createElement('tr');
   tr.dataset.slug = slug;
   tr.dataset.host = host;
   tr.dataset.status = 'active';
+  tr.dataset.folderSlug = folderSlug || '';
 
   // Use JSON.stringify to get a safe JS literal, then HTML-encode the quotes
   // for the onclick attribute value (browser decodes HTML entities before eval).
@@ -611,15 +860,15 @@ document.getElementById('createForm').addEventListener('submit', async function(
     '<td class="center nowrap">' + esc(expiryText) + '</td>' +
     '<td class="center nowrap">' +
       '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL">📋 Copy</button> ' +
-      '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(body.expiresAt) + ')" title="Edit link">✏️ Edit</button> ' +
+      '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(body.expiresAt) + ', ' + jsAttr(folderSlug || null) + ')" title="Edit link">✏️ Edit</button> ' +
       '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Toggle active/inactive">⏸️</button> ' +
-      '<button class="btn btn-sm btn-danger" onclick="softDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Delete (soft)">🗑</button> ' +
-      '<button class="btn btn-sm btn-danger" onclick="permanentDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Delete permanently">💥</button>' +
+      '' +
     '</td>';
   tbody.insertBefore(tr, tbody.firstChild);
 
   const badge = document.getElementById('linkCount');
   if (badge) badge.textContent = parseInt(badge.textContent || '0', 10) + 1;
+  applyRowVisibility();
 });
     `,
   );
