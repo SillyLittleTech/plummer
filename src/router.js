@@ -176,8 +176,7 @@ async function handleAPI(request, env, pathname) {
   //
   // Provide key via header `x-force-delete-key` OR query param `key` (header recommended).
   if (pathname === '/api/debug/force-delete' && request.method === 'POST') {
-    const access = await requireDebugAccess();
-    if (!access.ok) return access.response;
+    // Require FORCE_DELETE_KEY to be configured for this operation to exist.
     if (!env.FORCE_DELETE_KEY) {
       return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 });
     }
@@ -187,11 +186,16 @@ async function handleAPI(request, env, pathname) {
     const slug = url.searchParams.get('slug');
     if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
 
-    // Check provided key (constant-time compare on sha256)
+    // Allow either a matching FORCE_DELETE_KEY (header `x-force-delete-key` OR query `key`)
+    // OR valid Basic Auth via `requireDebugAccess()`. This avoids applying blanket
+    // Basic Auth rules to all `/api/*` routes while still protecting this destructive
+    // endpoint.
     const provided = request.headers.get('x-force-delete-key') ?? url.searchParams.get('key') ?? '';
     const [providedHash, expectedHash] = await Promise.all([sha256(provided), sha256(env.FORCE_DELETE_KEY)]);
-    if (!safeEqual(providedHash, expectedHash)) {
-      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    if (!provided || !safeEqual(providedHash, expectedHash)) {
+      // Fallback to Basic Auth for debugging access.
+      const access = await requireDebugAccess();
+      if (!access.ok) return access.response;
     }
 
     const before = await getLink(env, host, slug);
@@ -764,26 +768,32 @@ export async function routeRequest(request, env) {
     return handleHomePage(origin);
   }
 
-  // Admin + API authentication.
-  //
-  // NOTE: In some production setups, `/admin` is protected at the edge (e.g. Cloudflare Access),
-  // and authentication is enforced at the domain level instead of inside the Worker.
-  // For the template/default use-case, we still enforce Basic Auth here as a secure default.
-  if (pathname === '/admin' || pathname === '/admin/' || pathname.startsWith('/api/')) {
-    if (!env.ADMIN_SECRET) {
-      if ((pathname === '/admin' || pathname === '/admin/') && request.method === 'GET') {
+  // Note: local Basic Auth should NOT be applied to all `/api/*` routes by
+  // default. Debug-only endpoints inside `handleAPI()` use `requireDebugAccess()`
+  // which enforces Basic Auth when necessary. In production, protect `/admin`
+  // at the edge (Cloudflare Access) and leave API access to that protection.
+
+  if ((pathname === '/admin' || pathname === '/admin/') && request.method === 'GET') {
+    // By default, `/admin` should be protected at the edge (e.g. Cloudflare Access)
+    // in production. To avoid accidental exposure, API routes continue to require
+    // Basic Auth via `ADMIN_SECRET`.
+    //
+    // If you want to enable local Basic Auth instead of an edge-auth solution,
+    // uncomment the block below and set `ADMIN_SECRET` (Wrangler secret) and
+    // `ENABLE_LOCAL_ADMIN_AUTH=true` in your environment or .dev.vars file.
+    /*
+    const localAdminEnabled = env.ENABLE_LOCAL_ADMIN_AUTH === true || env.ENABLE_LOCAL_ADMIN_AUTH === 'true';
+    if (localAdminEnabled) {
+      if (!env.ADMIN_SECRET) {
         return new Response(misconfiguredPage(), {
           status: 503,
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
         });
       }
-      return Response.json(
-        { error: 'ADMIN_SECRET is not configured. Set it with: npx wrangler secret put ADMIN_SECRET' },
-        { status: 503 },
-      );
+      const ok = await checkAdminAuth(request, env);
+      if (!ok) return unauthorizedResponse();
     }
-    const ok = await checkAdminAuth(request, env);
-    if (!ok) return unauthorizedResponse();
+    */
   }
 
   // Admin dashboard

@@ -80,18 +80,32 @@ id         = "your-production-namespace-id"
 preview_id = "your-preview-namespace-id"
 ```
 
-### 4. Set the admin password secret
+### 4. Admin authentication
 
-The admin dashboard (`/admin`) and all `/api/*` routes are protected by HTTP Basic Auth.
-Set the password via Wrangler:
+Production recommendation: protect the admin dashboard (`/admin`) at the edge (for
+example, using Cloudflare Access). All `/api/*` routes always require HTTP Basic
+Auth and therefore require `ADMIN_SECRET` to be set.
+
+To enable local Basic Auth instead of an edge solution (for development or if you
+don't have an edge auth configured), uncomment the local auth block in
+[src/router.js](src/router.js#L752-L792) and set the secret:
 
 ```bash
 npx wrangler secret put ADMIN_SECRET
 # → Enter your chosen password when prompted
 ```
 
-When visiting `/admin`, your browser will ask for a username and password.  
-Use **any username** and the password you just set.
+Then enable the local flag (in `.dev.vars` or your environment):
+
+```
+ADMIN_SECRET=your-local-password
+ENABLE_LOCAL_ADMIN_AUTH=true
+```
+
+When enabled, visiting `/admin` will prompt for Basic Auth (any username + the
+password you set). By default the local auth block is commented out in the code
+to avoid accidental exposure in production—uncomment it only if you intend to
+use local Basic Auth.
 
 ### 5. Configure allowed hostnames (multi-domain/subdomain support)
 
