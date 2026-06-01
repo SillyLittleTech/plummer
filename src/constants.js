@@ -11,7 +11,7 @@ export const RESERVED = new Set([
 export const ADMIN_REALM = 'Plummer Admin';
 
 // Visible build version displayed in the UI footer.
-export const APP_VERSION = 'v2.1';
+export const APP_VERSION = 'v2.5.3';
 
 export const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
