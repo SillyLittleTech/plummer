@@ -2,14 +2,19 @@ import { RESERVED } from './constants.js';
 import {
   deleteFolder,
   deleteLink,
+  deleteTransformer,
   getAllLinks,
+  getAllTransformers,
   getFolder,
   getLink,
+  getTransformer,
   listFolders,
   listLinksByFolder,
+  listTransformers,
   normalizeHost,
   putFolder,
   putLink,
+  putTransformer,
 } from './kv.js';
 import { adminPage } from './pages/admin.js';
 import { homePage } from './pages/home.js';
@@ -19,6 +24,17 @@ import { heartbeatPage } from './pages/heartbeat.js';
 import { checkAdminAuth, unauthorizedResponse } from './security.js';
 import { isValidUrl, safeEqual, sha256 } from './util.js';
 import { getActor, listAudit, writeAudit } from './audit.js';
+import { matchTransformer, validateTransformerInput } from './transformers.js';
+
+function randomId() {
+  try {
+    return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  } catch {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+}
 
 function getAllowedHosts(env) {
   const raw = env.ALLOWED_HOSTS_JSON;
@@ -40,8 +56,22 @@ async function handleHomePage(origin) {
 
 async function handleAdminPage(_request, env, origin) {
   const links = await getAllLinks(env);
+  const transformers = await getAllTransformers(env);
   const allowedHosts = getAllowedHosts(env);
-  return new Response(adminPage(links, origin, allowedHosts), {
+  const rows = [
+    ...links.map((l) => ({ ...l, type: 'link' })),
+    ...transformers.map((t) => ({
+      ...t,
+      type: 'transformer',
+      slug: t.sourcePattern,
+      guest: t.targetTemplate,
+      passwordHash: null,
+      expiresAt: null,
+      folderSlug: null,
+      status: t.status ?? 'active',
+    })),
+  ].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  return new Response(adminPage(rows, origin, allowedHosts), {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
@@ -226,6 +256,123 @@ async function handleAPI(request, env, pathname) {
     return Response.json(links);
   }
 
+  // GET /api/transformers?host=...
+  if (pathname === '/api/transformers' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const host = normalizeHost(url.searchParams.get('host'));
+    const hostCheck = assertHostAllowed(host);
+    if (!hostCheck.ok) return hostCheck.response;
+    return Response.json(await listTransformers(env, host));
+  }
+
+  // POST /api/transformers
+  if (pathname === '/api/transformers' && request.method === 'POST') {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    const normalizedHost = normalizeHost(body?.host);
+    const hostCheck = assertHostAllowed(normalizedHost);
+    if (!hostCheck.ok) return hostCheck.response;
+
+    const validation = validateTransformerInput(body?.sourcePattern ?? body?.slug, body?.targetTemplate ?? body?.guest);
+    if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+
+    const now = Date.now();
+    const transformer = {
+      id: randomId(),
+      host: normalizedHost,
+      name: body?.name || validation.sourcePattern,
+      sourcePattern: validation.sourcePattern,
+      targetTemplate: validation.targetTemplate,
+      status: 'active',
+      priority: Number(body?.priority ?? 100),
+      clicks: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await putTransformer(env, normalizedHost, transformer);
+    env.ctx?.waitUntil(writeAudit(env, {
+      action: 'transformer.create',
+      host: normalizedHost,
+      transformerId: transformer.id,
+      slug: transformer.sourcePattern,
+      after: transformer,
+      actor,
+    }));
+    return Response.json({ id: transformer.id, host: normalizedHost, slug: transformer.sourcePattern, type: 'transformer', message: 'Created' }, { status: 201 });
+  }
+
+  // PATCH/DELETE /api/transformers/:id
+  const transformerMatch = pathname.match(/^\/api\/transformers\/([^/]+)$/);
+  if (transformerMatch && (request.method === 'PATCH' || request.method === 'DELETE')) {
+    const id = decodeURIComponent(transformerMatch[1]);
+    let host;
+    let body = {};
+    if (request.method === 'PATCH') {
+      try {
+        body = await request.json();
+      } catch {
+        return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      host = normalizeHost(body?.host);
+    } else {
+      const url = new URL(request.url);
+      host = normalizeHost(url.searchParams.get('host'));
+    }
+    const hostCheck = assertHostAllowed(host);
+    if (!hostCheck.ok) return hostCheck.response;
+
+    const existing = await getTransformer(env, host, id);
+    if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
+
+    if (request.method === 'DELETE') {
+      await deleteTransformer(env, host, id);
+      env.ctx?.waitUntil(writeAudit(env, {
+        action: 'transformer.delete',
+        host,
+        transformerId: id,
+        slug: existing.sourcePattern,
+        before: existing,
+        actor,
+      }));
+      return Response.json({ message: 'Deleted' });
+    }
+
+    const next = { ...existing, updatedAt: Date.now() };
+    if (body?.status !== undefined) {
+      const s = body.status;
+      if (s !== 'active' && s !== 'inactive' && s !== 'deleted') {
+        return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
+      }
+      next.status = s;
+    }
+    if (body?.sourcePattern !== undefined || body?.targetTemplate !== undefined || body?.slug !== undefined || body?.guest !== undefined) {
+      const source = body?.sourcePattern ?? body?.slug ?? existing.sourcePattern;
+      const target = body?.targetTemplate ?? body?.guest ?? existing.targetTemplate;
+      const validation = validateTransformerInput(source, target);
+      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+      next.sourcePattern = validation.sourcePattern;
+      next.targetTemplate = validation.targetTemplate;
+      next.name = body?.name || validation.sourcePattern;
+    }
+
+    await putTransformer(env, host, next);
+    env.ctx?.waitUntil(writeAudit(env, {
+      action: 'transformer.update',
+      host,
+      transformerId: id,
+      slug: next.sourcePattern,
+      before: existing,
+      after: next,
+      actor,
+    }));
+    return Response.json({ id, host, slug: next.sourcePattern, type: 'transformer', message: 'Updated' });
+  }
+
   // GET /api/audit
   if (pathname === '/api/audit' && request.method === 'GET') {
     const url = new URL(request.url);
@@ -368,9 +515,45 @@ async function handleAPI(request, env, pathname) {
     }
 
     const { slug, guest, expiresAt, password, host, folderSlug } = body ?? {};
+    const isTransformer = body?.type === 'transformer' || body?.isTransformer === true;
     const normalizedHost = normalizeHost(host);
     const hostCheck = assertHostAllowed(normalizedHost);
     if (!hostCheck.ok) return hostCheck.response;
+
+    if (isTransformer) {
+      const validation = validateTransformerInput(slug, guest);
+      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+
+      const now = Date.now();
+      const transformer = {
+        id: randomId(),
+        host: normalizedHost,
+        name: validation.sourcePattern,
+        sourcePattern: validation.sourcePattern,
+        targetTemplate: validation.targetTemplate,
+        status: 'active',
+        priority: Number(body?.priority ?? 100),
+        clicks: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await putTransformer(env, normalizedHost, transformer);
+      env.ctx?.waitUntil(writeAudit(env, {
+        action: 'transformer.create',
+        host: normalizedHost,
+        transformerId: transformer.id,
+        slug: transformer.sourcePattern,
+        after: transformer,
+        actor,
+      }));
+      return Response.json({
+        id: transformer.id,
+        slug: transformer.sourcePattern,
+        host: normalizedHost,
+        type: 'transformer',
+        message: 'Created',
+      }, { status: 201 });
+    }
 
     if (!slug || typeof slug !== 'string') {
       return Response.json({ error: 'slug is required' }, { status: 400 });
@@ -448,6 +631,42 @@ async function handleAPI(request, env, pathname) {
     const normalizedHost = normalizeHost(body?.host);
     const hostCheck = assertHostAllowed(normalizedHost);
     if (!hostCheck.ok) return hostCheck.response;
+
+    if (body?.type === 'transformer' || body?.isTransformer === true) {
+      const existing = await getTransformer(env, normalizedHost, slug);
+      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
+      const next = { ...existing, updatedAt: Date.now() };
+
+      if (body?.status !== undefined) {
+        const s = body.status;
+        if (s !== 'active' && s !== 'inactive' && s !== 'deleted') {
+          return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
+        }
+        next.status = s;
+      }
+
+      if (body?.slug !== undefined || body?.guest !== undefined) {
+        const source = body?.slug !== undefined ? body.slug : existing.sourcePattern;
+        const target = body?.guest !== undefined ? body.guest : existing.targetTemplate;
+        const validation = validateTransformerInput(source, target);
+        if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+        next.sourcePattern = validation.sourcePattern;
+        next.targetTemplate = validation.targetTemplate;
+        next.name = validation.sourcePattern;
+      }
+
+      await putTransformer(env, normalizedHost, next);
+      env.ctx?.waitUntil(writeAudit(env, {
+        action: 'transformer.update',
+        host: normalizedHost,
+        transformerId: slug,
+        slug: next.sourcePattern,
+        before: existing,
+        after: next,
+        actor,
+      }));
+      return Response.json({ id: slug, host: normalizedHost, slug: next.sourcePattern, type: 'transformer', message: 'Updated' });
+    }
 
     const existing = await getLink(env, normalizedHost, slug);
     if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
@@ -587,6 +806,21 @@ async function handleAPI(request, env, pathname) {
     const hostCheck = assertHostAllowed(host);
     if (!hostCheck.ok) return hostCheck.response;
 
+    if (url.searchParams.get('type') === 'transformer') {
+      const existing = await getTransformer(env, host, slug);
+      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
+      await deleteTransformer(env, host, slug);
+      env.ctx?.waitUntil(writeAudit(env, {
+        action: 'transformer.delete',
+        host,
+        transformerId: slug,
+        slug: existing.sourcePattern,
+        before: existing,
+        actor,
+      }));
+      return Response.json({ message: 'Deleted' });
+    }
+
     const existing = await getLink(env, host, slug);
     if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
     if ((existing.status ?? 'active') !== 'inactive') {
@@ -613,6 +847,21 @@ async function handleAPI(request, env, pathname) {
   }
 
   return Response.json({ error: 'API route not found' }, { status: 404 });
+}
+
+async function handleTransformerRedirect(request, env) {
+  const url = new URL(request.url);
+  const hostHeader = request.headers.get('host');
+  const host = normalizeHost(hostHeader ?? url.host);
+  const transformers = await listTransformers(env, host);
+  for (const transformer of transformers) {
+    const match = matchTransformer(transformer, url.pathname);
+    if (!match) continue;
+    const updated = { ...transformer, clicks: (transformer.clicks ?? 0) + 1, updatedAt: Date.now() };
+    env.ctx?.waitUntil(putTransformer(env, host, updated));
+    return Response.redirect(match.target, 302);
+  }
+  return null;
 }
 
 async function handleRedirect(request, env, slug) {
@@ -686,6 +935,10 @@ async function handleRedirect(request, env, slug) {
     }
   }
   if (!link) {
+    if (request.method === 'GET') {
+      const transformerResponse = await handleTransformerRedirect(request, env);
+      if (transformerResponse) return transformerResponse;
+    }
     const headers = { 'Content-Type': 'text/html; charset=utf-8' };
     if ((request.headers.get('x-plummer-debug') ?? '') === '1') {
       headers['X-Plummer-Debug-HostHeader'] = hostHeader ?? '';
@@ -826,9 +1079,13 @@ export async function routeRequest(request, env) {
     return handleRedirect(request, env, slugMatch[1]);
   }
 
+  if (request.method === 'GET') {
+    const transformerResponse = await handleTransformerRedirect(request, env);
+    if (transformerResponse) return transformerResponse;
+  }
+
   return new Response(notFoundPage(), {
     status: 404,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
-
