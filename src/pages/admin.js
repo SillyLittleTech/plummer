@@ -5,10 +5,15 @@ export function adminPage(links, origin, allowedHosts = []) {
   const hosts = Array.isArray(allowedHosts) && allowedHosts.length > 0
     ? allowedHosts
     : [new URL(origin).host];
+  const renderPatternTokens = (value) => escHtml(value).replace(
+    /\$\{([1-3])\}/g,
+    '<span class="var-token var-token-$1">&#36;{$1}</span>',
+  );
 
   const rows = links.length === 0
     ? `<tr><td colspan="8" class="empty-row">No links yet — create one above!</td></tr>`
     : links.map((link) => {
+      const isTransformer = link.type === 'transformer';
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
         : '—';
@@ -27,31 +32,37 @@ export function adminPage(links, origin, allowedHosts = []) {
         '<span class="pill pill-danger">Deleted</span>';
 
       const folderSlugAttr = escHtml(link.folderSlug ?? '');
-      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}">
-          <td><code class="slug-code">${escHtml(link.slug)}</code></td>
+      const typeAttr = isTransformer ? 'transformer' : 'link';
+      const idAttr = escHtml(isTransformer ? link.id : link.slug);
+      return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}" data-type="${typeAttr}" data-id="${idAttr}">
+          <td><code class="slug-code">${isTransformer ? renderPatternTokens(link.slug) : escHtml(link.slug)}</code>${isTransformer ? ' <span class="pill pill-transformer">Transformer</span>' : ''}</td>
           <td class="host-cell"><code class="host-code">${escHtml(linkHost)}</code></td>
           <td class="center status-cell">${statusBadge}</td>
           <td class="url-cell">
-            <a href="${escHtml(link.guest)}" target="_blank" rel="noopener"
-               title="${escHtml(link.guest)}">${escHtml(link.guest)}</a>
+            ${isTransformer
+              ? `<code title="${escHtml(link.guest)}">${renderPatternTokens(link.guest)}</code>`
+              : `<a href="${escHtml(link.guest)}" target="_blank" rel="noopener"
+               title="${escHtml(link.guest)}">${escHtml(link.guest)}</a>`}
           </td>
           <td class="center">${link.clicks ?? 0}</td>
-          <td class="center pass-cell">${link.passwordHash ? '🔒' : '—'}</td>
+          <td class="center pass-cell">${isTransformer ? '—' : (link.passwordHash ? '🔒' : '—')}</td>
           <td class="center nowrap">${expiry}</td>
           <td class="center nowrap">
             <button class="btn btn-sm btn-secondary"
               onclick="copyLink(${escHtml(JSON.stringify(shortUrl))})"
-              title="Copy short URL">📋 Copy</button>
+              title="Copy short URL" ${isTransformer ? 'disabled' : ''}>📋 Copy</button>
             <button class="btn btn-sm btn-secondary"
-              onclick="openEditModal(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))}, ${guestJs}, ${expiresAtJs}, ${escHtml(JSON.stringify(link.folderSlug ?? null))})"
+              onclick="openEditModal(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))}, ${guestJs}, ${expiresAtJs}, ${escHtml(JSON.stringify(link.folderSlug ?? null))}, ${escHtml(JSON.stringify(typeAttr))}, ${escHtml(JSON.stringify(isTransformer ? link.id : link.slug))})"
               title="Edit link">✏️ Edit</button>
             <button class="btn btn-sm btn-secondary"
-              onclick="toggleInactive(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
+              onclick="toggleInactive(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(isTransformer ? link.id : link.slug))}, ${escHtml(JSON.stringify(typeAttr))})"
               title="Toggle active/inactive">⏸️</button>
             <button class="btn btn-sm btn-danger" data-action="schedule-delete"
-              style="${status === 'inactive' ? '' : 'display:none;'}"
-              onclick="scheduleDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})"
-              title="Schedule deletion (3 days)">🗑 Delete</button>
+              style="${isTransformer || status === 'inactive' ? '' : 'display:none;'}"
+              onclick="${isTransformer
+                ? `deleteTransformer(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.id))})`
+                : `scheduleDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})`}"
+              title="${isTransformer ? 'Delete transformer' : 'Schedule deletion (3 days)'}">🗑 Delete</button>
           </td>
         </tr>`;
     }).join('');
@@ -88,13 +99,23 @@ export function adminPage(links, origin, allowedHosts = []) {
           <input class="input" type="text" id="slug" name="slug"
             placeholder="my-link" pattern="[a-zA-Z0-9_-]+" required
             autocomplete="off" spellcheck="false" />
-          <p class="hint">Letters, numbers, hyphens and underscores only.</p>
+          <div id="slugTokenPreview" class="transformer-token-preview" style="display:none;"></div>
+          <p class="hint" id="slugHint">Letters, numbers, hyphens and underscores only.</p>
         </div>
         <div class="form-group">
           <label for="guest">Destination URL</label>
           <input class="input" type="url" id="guest" name="guest"
             placeholder="https://example.com" required />
+          <div id="guestTokenPreview" class="transformer-token-preview" style="display:none;"></div>
+          <p class="hint" id="guestHint" style="display:none;"></p>
         </div>
+      </div>
+      <div class="form-options-row">
+        <label class="transformer-toggle" title="Transformer links use &#36;{1}, &#36;{2}, and &#36;{3} as matched path parts, then substitute those values into the destination.">
+          <input type="checkbox" id="isTransformer" name="isTransformer" />
+          <span>Transformer link</span>
+        </label>
+        <div id="transformerPreview" class="transformer-preview" style="display:none;"></div>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -123,12 +144,12 @@ export function adminPage(links, origin, allowedHosts = []) {
 
   <section class="card links-card" aria-label="All short links">
     <h2>All Links <span class="badge" id="linkCount">${links.length}</span></h2>
-    <div style="margin:-6px 0 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-      <label style="display:flex; align-items:center; gap:10px; font-weight:700; font-size:13px; opacity:0.9;">
+    <div class="table-toolbar">
+      <label class="table-toggle">
         <input type="checkbox" id="showDeletedToggle" />
         Show deleted (last 3 days)
       </label>
-      <span class="hint" style="margin:0;">Deleted links purge automatically after 3 days.</span>
+      <span class="hint table-hint">Deleted links purge automatically after 3 days.</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -146,6 +167,7 @@ export function adminPage(links, origin, allowedHosts = []) {
         </thead>
         <tbody id="linksBody">
           ${rows}
+          <tr id="filterEmptyRow" style="display:none;"><td colspan="8" class="empty-row">No links match the current filters.</td></tr>
         </tbody>
       </table>
     </div>
@@ -206,6 +228,8 @@ export function adminPage(links, origin, allowedHosts = []) {
       <form id="editForm" novalidate>
         <input type="hidden" id="editHost" />
         <input type="hidden" id="editOldSlug" />
+        <input type="hidden" id="editType" />
+        <input type="hidden" id="editId" />
 
         <div class="form-row">
           <div class="form-group">
@@ -329,6 +353,17 @@ export function adminPage(links, origin, allowedHosts = []) {
       font-size: 1.1rem; font-weight: 700; margin-bottom: 18px;
     }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-options-row {
+      display: grid;
+      grid-template-columns: minmax(180px, max-content) 1fr;
+      align-items: start;
+      gap: 12px;
+      margin: 2px 0 16px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--card-hover) 42%, transparent);
+    }
     .opt { font-weight: 400; opacity: 0.6; font-size: 12px; }
 
     .table-wrap { overflow-x: auto; }
@@ -368,6 +403,28 @@ export function adminPage(links, origin, allowedHosts = []) {
       vertical-align: middle;
     }
     #formError { margin-top: 12px; margin-bottom: 0; }
+    .table-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: -6px 0 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--card-hover) 42%, transparent);
+    }
+    .table-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      font-weight: 800;
+      font-size: 13px;
+      opacity: 0.92;
+    }
+    .table-hint { margin: 0; }
     .actions-cell { display: flex; gap: 6px; justify-content: center; }
     td:last-child { text-align: center; }
     td:last-child .btn { margin: 2px; }
@@ -412,6 +469,68 @@ export function adminPage(links, origin, allowedHosts = []) {
     .pill-ok { background: color-mix(in srgb, var(--success-color) 18%, transparent); color: var(--success-color); }
     .pill-warn { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #f59e0b; }
     .pill-danger { background: color-mix(in srgb, var(--danger-color) 16%, transparent); color: var(--danger-color); }
+    .pill-transformer {
+      margin-left: 6px;
+      background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+      color: var(--accent-color);
+      border-color: color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+    }
+    .transformer-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: help;
+    }
+    .input.transformer-special {
+      border-color: color-mix(in srgb, var(--accent-color) 58%, var(--border-color));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 14%, transparent);
+      background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-color));
+    }
+    .transformer-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      font-size: 12px;
+    }
+    .transformer-token-preview {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: var(--card-hover);
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .transformer-map {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      background: var(--card-hover);
+      cursor: help;
+    }
+    .var-token {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-weight: 900;
+      border: 1px solid currentColor;
+    }
+    .var-token-1 { color: #2563eb; background: color-mix(in srgb, #2563eb 12%, transparent); }
+    .var-token-2 { color: #059669; background: color-mix(in srgb, #059669 12%, transparent); }
+    .var-token-3 { color: #c2410c; background: color-mix(in srgb, #c2410c 12%, transparent); }
+    .transformer-value {
+      font-weight: 900;
+      color: var(--text-color);
+    }
 
     /* Edit modal */
     .modal-backdrop {
@@ -445,6 +564,7 @@ export function adminPage(links, origin, allowedHosts = []) {
 
     @media (max-width: 640px) {
       .form-row { grid-template-columns: 1fr; }
+      .form-options-row { grid-template-columns: 1fr; }
       body { padding: 16px 12px 40px; }
     }
     `,
@@ -458,6 +578,16 @@ function jsAttr(val) {
   return JSON.stringify(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
 }
 
+function renderPatternTokens(value) {
+  return String(value ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;')
+    .replace(/\\$\\{([1-3])\\}/g, '<span class=\"var-token var-token-$1\">&#36;{$1}</span>');
+}
+
 function showToast(msg, isError) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -468,19 +598,22 @@ function showToast(msg, isError) {
 
 // (deleteLink removed in favor of softDeleteLink/permanentDeleteLink)
 
-async function setStatus(host, slug, status) {
-  const r = await fetch('/api/links/' + encodeURIComponent(slug), {
+async function setStatus(host, id, status, type) {
+  const r = await fetch('/api/links/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ host, status }),
+    body: JSON.stringify({ host, status, type: type === 'transformer' ? 'transformer' : 'link' }),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Status update failed');
   return d;
 }
 
-function setRowStatus(host, slug, status) {
-  const row = document.querySelector('[data-slug="' + slug + '"][data-host="' + host + '"]');
+function setRowStatus(host, id, status, type) {
+  const selector = type === 'transformer'
+    ? '[data-id="' + id + '"][data-host="' + host + '"][data-type="transformer"]'
+    : '[data-slug="' + id + '"][data-host="' + host + '"]';
+  const row = document.querySelector(selector);
   if (!row) return;
   row.dataset.status = status;
   const statusCell = row.querySelector('.status-cell');
@@ -492,7 +625,7 @@ function setRowStatus(host, slug, status) {
 
   // Ensure delete button visibility matches status rules
   const delBtn = row.querySelector('[data-action=\"schedule-delete\"]');
-  if (delBtn) delBtn.style.display = status === 'inactive' ? '' : 'none';
+  if (delBtn) delBtn.style.display = type === 'transformer' || status === 'inactive' ? '' : 'none';
 }
 
 let SHOW_DELETED = false;
@@ -500,32 +633,50 @@ let ACTIVE_FOLDER = '';
 let ACTIVE_FOLDER_NAME = 'Default';
 let ACTIVE_HOST = '';
 let LAST_FOLDERS = [];
+let LAST_AUDIT_ITEMS = [];
 
 function applyRowVisibility() {
   const hostSel = document.getElementById('host');
   if (hostSel) ACTIVE_HOST = hostSel.value;
 
   const rows = document.querySelectorAll('#linksBody tr[data-status]');
+  let visibleCount = 0;
   for (const row of rows) {
     const s = row.dataset.status || 'active';
     const host = row.dataset.host || '';
     const folder = row.dataset.folderSlug || '';
+    const type = row.dataset.type || 'link';
 
     const hostOk = !ACTIVE_HOST || host === ACTIVE_HOST;
-    const folderOk = folder === (ACTIVE_FOLDER || '');
+    const folderOk = type === 'transformer'
+      ? (ACTIVE_FOLDER || '') === ''
+      : folder === (ACTIVE_FOLDER || '');
     const deletedOk = !(s === 'deleted' && !SHOW_DELETED);
-    row.style.display = hostOk && folderOk && deletedOk ? '' : 'none';
+    const visible = hostOk && folderOk && deletedOk;
+    row.style.display = visible ? '' : 'none';
+    if (visible) visibleCount += 1;
+  }
+
+  const filterEmpty = document.getElementById('filterEmptyRow');
+  if (filterEmpty) {
+    const hasFilterableRows = rows.length > 0;
+    filterEmpty.style.display = hasFilterableRows && visibleCount === 0 ? '' : 'none';
   }
 }
 
-async function toggleInactive(host, slug) {
-  const row = document.querySelector('[data-slug="' + slug + '"][data-host="' + host + '"]');
+async function toggleInactive(host, id, type) {
+  const selector = type === 'transformer'
+    ? '[data-id="' + id + '"][data-host="' + host + '"][data-type="transformer"]'
+    : '[data-slug="' + id + '"][data-host="' + host + '"]';
+  const row = document.querySelector(selector);
   const current = row ? (row.dataset.status || 'active') : 'active';
   const next = current === 'inactive' ? 'active' : 'inactive';
   try {
-    await setStatus(host, slug, next);
-    setRowStatus(host, slug, next);
-    showToast((next === 'active' ? 'Activated: ' : 'Inactivated: ') + host + '/' + slug);
+    await setStatus(host, id, next, type);
+    setRowStatus(host, id, next, type);
+    applyRowVisibility();
+    const label = row ? (row.dataset.slug || id) : id;
+    showToast((next === 'active' ? 'Activated: ' : 'Inactivated: ') + host + '/' + label);
   } catch (e) {
     showToast('Error: ' + (e.message || 'Unknown error'), true);
   }
@@ -546,6 +697,21 @@ async function scheduleDeleteLink(host, slug) {
   }
 }
 
+async function deleteTransformer(host, id) {
+  if (!confirm('Delete transformer on ' + host + '?')) return;
+  const r = await fetch('/api/links/' + encodeURIComponent(id) + '?host=' + encodeURIComponent(host) + '&type=transformer', {
+    method: 'DELETE',
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return showToast('Error: ' + (d.error || 'Unknown error'), true);
+  const row = document.querySelector('[data-id="' + id + '"][data-host="' + host + '"][data-type="transformer"]');
+  if (row) row.remove();
+  showToast('Transformer deleted');
+  const badge = document.getElementById('linkCount');
+  if (badge) badge.textContent = Math.max(0, parseInt(badge.textContent || '0', 10) - 1);
+  applyRowVisibility();
+}
+
 function copyLink(url) {
   navigator.clipboard.writeText(url)
     .then(() => showToast('Copied: ' + url))
@@ -553,15 +719,17 @@ function copyLink(url) {
 }
 
 /** Rebuild action buttons so slugs in onclick match after rename. */
-function buildLinkRowActionsHtml(host, slug, guest, expiresAtMs, folderSlug, status) {
+function buildLinkRowActionsHtml(host, slug, guest, expiresAtMs, folderSlug, status, type, id) {
+  const isTransformer = type === 'transformer';
+  const actionId = id || slug;
   const co = new URL(ORIGIN);
   const shortUrl = (host === co.host) ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug);
-  const delStyle = (status === 'inactive') ? '' : 'display:none;';
+  const delStyle = (isTransformer || status === 'inactive') ? '' : 'display:none;';
   return (
-    '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL">📋 Copy</button> ' +
-    '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(expiresAtMs) + ', ' + jsAttr(folderSlug || null) + ')" title="Edit link">✏️ Edit</button> ' +
-    '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Toggle active/inactive">⏸️</button> ' +
-    '<button class="btn btn-sm btn-danger" data-action="schedule-delete" style="' + delStyle + '" onclick="scheduleDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Schedule deletion (3 days)">🗑 Delete</button>'
+    '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL"' + (isTransformer ? ' disabled' : '') + '>📋 Copy</button> ' +
+    '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(expiresAtMs) + ', ' + jsAttr(folderSlug || null) + ', ' + jsAttr(type || 'link') + ', ' + jsAttr(actionId) + ')" title="Edit link">✏️ Edit</button> ' +
+    '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(actionId) + ', ' + jsAttr(type || 'link') + ')" title="Toggle active/inactive">⏸️</button> ' +
+    '<button class="btn btn-sm btn-danger" data-action="schedule-delete" style="' + delStyle + '" onclick="' + (isTransformer ? ('deleteTransformer(' + jsAttr(host) + ', ' + jsAttr(actionId) + ')') : ('scheduleDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')')) + '" title="' + (isTransformer ? 'Delete transformer' : 'Schedule deletion (3 days)') + '">🗑 Delete</button>'
   );
 }
 
@@ -683,7 +851,12 @@ async function fetchAudit(limit) {
 function renderAuditTable(items) {
   const tbody = document.getElementById('auditBody');
   if (!tbody) return;
-  if (!items || items.length === 0) {
+  const visibleItems = (items || []).filter((e) => {
+    if (SHOW_DELETED) return true;
+    const action = String(e?.action || '').toLowerCase();
+    return !action.includes('delete') && !action.includes('purge');
+  });
+  if (!visibleItems || visibleItems.length === 0) {
     tbody.innerHTML = '<tr><td colspan=\"5\" class=\"empty-row\">No audit events yet.</td></tr>';
     return;
   }
@@ -692,7 +865,7 @@ function renderAuditTable(items) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  tbody.innerHTML = items.map((e) => {
+  tbody.innerHTML = visibleItems.map((e) => {
     const ts = e.timestamp ? new Date(e.timestamp).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
     const action = e.action || '—';
     const host = e.host || '—';
@@ -710,7 +883,8 @@ function renderAuditTable(items) {
 
 async function refreshAudit() {
   const items = await fetchAudit(150);
-  renderAuditTable(items);
+  LAST_AUDIT_ITEMS = items;
+  renderAuditTable(LAST_AUDIT_ITEMS);
 }
 
 document.getElementById('host').addEventListener('change', async (e) => {
@@ -718,6 +892,7 @@ document.getElementById('host').addEventListener('change', async (e) => {
   // keep folder host selector in sync by default
   const fh = document.getElementById('folderHost');
   if (fh && fh.value !== host && HOSTS.includes(host)) fh.value = host;
+  updateTransformerMode();
   await refreshFoldersForHost(host);
 });
 
@@ -797,17 +972,28 @@ function closeEditModal() {
   backdrop.classList.remove('show');
 }
 
-function openEditModal(host, slug, guest, expiresAt, folderSlug) {
+function openEditModal(host, slug, guest, expiresAt, folderSlug, type, id) {
+  const isTransformer = type === 'transformer';
   const backdrop = document.getElementById('editBackdrop');
   backdrop.classList.add('show');
   document.getElementById('editHost').value = host;
   document.getElementById('editOldSlug').value = slug;
+  document.getElementById('editType').value = isTransformer ? 'transformer' : 'link';
+  document.getElementById('editId').value = id || slug;
   document.getElementById('editSlug').value = slug;
   document.getElementById('editGuest').value = guest || '';
   document.getElementById('editExpiresAt').value = msToDatetimeLocal(expiresAt);
   document.getElementById('editFolderSlug').value = folderSlug || '';
   document.getElementById('editPassword').value = '';
   document.getElementById('editClearPassword').checked = false;
+  document.getElementById('editSlug').pattern = isTransformer ? '.*' : '[a-zA-Z0-9_-]+';
+  document.getElementById('editGuest').type = isTransformer ? 'text' : 'url';
+  document.getElementById('editSlug').classList.toggle('transformer-special', isTransformer);
+  document.getElementById('editGuest').classList.toggle('transformer-special', isTransformer);
+  document.getElementById('editExpiresAt').disabled = isTransformer;
+  document.getElementById('editFolderSlug').disabled = isTransformer;
+  document.getElementById('editPassword').disabled = isTransformer;
+  document.getElementById('editClearPassword').disabled = isTransformer;
   const err = document.getElementById('editError');
   err.style.display = 'none';
   err.textContent = '';
@@ -816,12 +1002,87 @@ function openEditModal(host, slug, guest, expiresAt, folderSlug) {
 document.getElementById('showDeletedToggle').addEventListener('change', (e) => {
   SHOW_DELETED = !!e.target.checked;
   applyRowVisibility();
+  renderAuditTable(LAST_AUDIT_ITEMS);
 });
+
+function updateTransformerMode() {
+  const enabled = !!document.getElementById('isTransformer')?.checked;
+  const slugEl = document.getElementById('slug');
+  const guestEl = document.getElementById('guest');
+  const previewEl = document.getElementById('transformerPreview');
+  const slugTokenPreview = document.getElementById('slugTokenPreview');
+  const guestTokenPreview = document.getElementById('guestTokenPreview');
+  const slugHint = document.getElementById('slugHint');
+  const guestHint = document.getElementById('guestHint');
+  const folderEl = document.getElementById('folderSlug');
+  const expiresEl = document.getElementById('expiresAt');
+  const passwordEl = document.getElementById('password');
+  if (!slugEl || !guestEl) return;
+
+  slugEl.pattern = enabled ? '.*' : '[a-zA-Z0-9_-]+';
+  slugEl.placeholder = enabled ? 'github/\${1}' : 'my-link';
+  guestEl.type = enabled ? 'text' : 'url';
+  guestEl.placeholder = enabled ? 'https://github.com/sillylittletech/\${1}' : 'https://example.com';
+  const hasSlugTokens = /\\$\\{[1-3]\\}/.test(slugEl.value);
+  const hasGuestTokens = /\\$\\{[1-3]\\}/.test(guestEl.value);
+  slugEl.classList.toggle('transformer-special', enabled);
+  guestEl.classList.toggle('transformer-special', enabled);
+  if (slugHint) {
+    slugHint.textContent = enabled
+      ? 'Use path patterns like github/\${1}; matched values flow into the destination.'
+      : 'Letters, numbers, hyphens and underscores only.';
+  }
+  if (guestHint) {
+    guestHint.style.display = enabled ? '' : 'none';
+    guestHint.textContent = enabled ? 'Use \${1}, \${2}, or \${3} to build the transformed URL.' : '';
+  }
+  if (folderEl) folderEl.disabled = enabled;
+  if (expiresEl) expiresEl.disabled = enabled;
+  if (passwordEl) passwordEl.disabled = enabled;
+
+  if (slugTokenPreview) {
+    slugTokenPreview.style.display = enabled && slugEl.value && hasSlugTokens ? '' : 'none';
+    slugTokenPreview.innerHTML = enabled && hasSlugTokens ? renderPatternTokens(slugEl.value) : '';
+  }
+  if (guestTokenPreview) {
+    guestTokenPreview.style.display = enabled && guestEl.value && hasGuestTokens ? '' : 'none';
+    guestTokenPreview.innerHTML = enabled && hasGuestTokens ? renderPatternTokens(guestEl.value) : '';
+  }
+
+  if (previewEl) {
+    const previewSourcePattern = slugEl.value.trim() || 'github/\${1}';
+    const previewTargetPattern = guestEl.value.trim() || 'https://github.com/sillylittletech/\${1}';
+    const text = previewSourcePattern + ' ' + previewTargetPattern;
+    const vars = Array.from(new Set((text.match(/\\$\\{[1-3]\\}/g) || []).map((v) => v.match(/[1-3]/)[0]))).sort();
+    if (!enabled || vars.length === 0) {
+      previewEl.style.display = 'none';
+      previewEl.textContent = '';
+    } else {
+      const samples = { 1: 'example1', 2: 'example2', 3: 'example3' };
+      const host = document.getElementById('host')?.value || new URL(ORIGIN).host;
+      const applySamples = (value) => String(value).replace(/\\$\\{([1-3])\\}/g, (_m, n) => samples[n]);
+      const source = host + '/' + applySamples(previewSourcePattern).replace(/^\\/+/, '');
+      const target = applySamples(previewTargetPattern);
+      const title = source + ' will become ' + target + ' when transformed';
+      previewEl.style.display = 'flex';
+      previewEl.innerHTML = '<span class=\"transformer-map\" title=\"' +
+        title.replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;') +
+        '\"><strong class=\"transformer-value\">' + renderPatternTokens(source) + '</strong>' +
+        '<span aria-hidden=\"true\">→</span>' +
+        '<strong class=\"transformer-value\">' + renderPatternTokens(target) + '</strong></span>';
+    }
+  }
+}
+
+document.getElementById('isTransformer')?.addEventListener('change', updateTransformerMode);
+document.getElementById('slug')?.addEventListener('input', updateTransformerMode);
+document.getElementById('guest')?.addEventListener('input', updateTransformerMode);
 
 // Initial hide of deleted rows
 document.addEventListener('DOMContentLoaded', () => {
   refreshFoldersForHost(document.getElementById('host').value);
   refreshAudit();
+  updateTransformerMode();
   applyRowVisibility();
 });
 
@@ -850,6 +1111,8 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
 
   const host = document.getElementById('editHost').value.trim();
   const oldSlug = document.getElementById('editOldSlug').value.trim();
+  const editType = document.getElementById('editType').value || 'link';
+  const editId = document.getElementById('editId').value.trim() || oldSlug;
   const newSlug = document.getElementById('editSlug').value.trim();
   const guest = document.getElementById('editGuest').value.trim();
   const expiresAtRaw = document.getElementById('editExpiresAt').value;
@@ -862,6 +1125,37 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
   saveBtn.textContent = 'Saving…';
 
   try {
+    if (editType === 'transformer') {
+      const pr = await fetch('/api/links/' + encodeURIComponent(editId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, slug: newSlug, guest, type: 'transformer' }),
+      });
+      const pd = await pr.json().catch(() => ({}));
+      if (!pr.ok) throw new Error(pd.error || 'Update failed');
+
+      const row = document.querySelector('[data-id="' + editId + '"][data-host="' + host + '"][data-type="transformer"]');
+      if (row) {
+        row.dataset.slug = newSlug;
+        const code = row.querySelector('.slug-code');
+        if (code) code.innerHTML = renderPatternTokens(newSlug);
+        const destCode = row.querySelector('.url-cell code');
+        if (destCode) {
+          destCode.title = guest;
+          destCode.innerHTML = renderPatternTokens(guest);
+        }
+        const actionsCell = row.querySelector('td:last-child');
+        if (actionsCell) {
+          const st = row.dataset.status || 'active';
+          actionsCell.innerHTML = buildLinkRowActionsHtml(host, newSlug, guest, null, null, st, 'transformer', editId);
+        }
+      }
+
+      showToast('Updated transformer: ' + host + '/' + newSlug);
+      closeEditModal();
+      return;
+    }
+
     let currentSlug = oldSlug;
 
     if (newSlug && newSlug !== oldSlug) {
@@ -926,7 +1220,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
       if (actionsCell) {
         const st = row.dataset.status || 'active';
         const expMs = expiresAtRaw ? new Date(expiresAtRaw).getTime() : null;
-        actionsCell.innerHTML = buildLinkRowActionsHtml(host, currentSlug, guest, expMs, folderSlug || null, st);
+        actionsCell.innerHTML = buildLinkRowActionsHtml(host, currentSlug, guest, expMs, folderSlug || null, st, 'link', currentSlug);
       }
     }
 
@@ -952,6 +1246,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const folderSlug = (fd.get('folderSlug') || '').trim();
   const expiresAtRaw = fd.get('expiresAt');
   const password = fd.get('password');
+  const isTransformer = document.getElementById('isTransformer')?.checked || false;
 
   const body = {
     host,
@@ -961,10 +1256,17 @@ document.getElementById('createForm').addEventListener('submit', async function(
     expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
     password: password || null,
   };
+  if (isTransformer) {
+    body.type = 'transformer';
+    body.isTransformer = true;
+    body.folderSlug = null;
+    body.expiresAt = null;
+    body.password = null;
+  }
 
   const btn = document.getElementById('createBtn');
   btn.disabled = true;
-  btn.textContent = 'Creating…';
+  btn.textContent = isTransformer ? 'Creating transformer…' : 'Creating…';
 
   const r = await fetch('/api/links', {
     method: 'POST',
@@ -981,13 +1283,17 @@ document.getElementById('createForm').addEventListener('submit', async function(
     return;
   }
 
-  showToast('Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug)));
+  const createdId = d.id || slug;
+  showToast(isTransformer
+    ? ('Transformer created: ' + host + '/' + slug)
+    : ('Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug))));
   e.target.reset();
+  updateTransformerMode();
 
   // Add row to table
   const tbody = document.getElementById('linksBody');
   // Remove empty-row if present
-  const emptyRow = tbody.querySelector('.empty-row');
+  const emptyRow = tbody.querySelector('tr:not(#filterEmptyRow) .empty-row');
   if (emptyRow) emptyRow.closest('tr').remove();
 
   const expiryText = body.expiresAt
@@ -998,25 +1304,24 @@ document.getElementById('createForm').addEventListener('submit', async function(
   tr.dataset.slug = slug;
   tr.dataset.host = host;
   tr.dataset.status = 'active';
-  tr.dataset.folderSlug = folderSlug || '';
+  tr.dataset.folderSlug = isTransformer ? '' : (folderSlug || '');
+  tr.dataset.type = isTransformer ? 'transformer' : 'link';
+  tr.dataset.id = createdId;
 
   function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   tr.innerHTML =
-    '<td><code class="slug-code">' + esc(slug) + '</code></td>' +
+    '<td><code class="slug-code">' + (isTransformer ? renderPatternTokens(slug) : esc(slug)) + '</code>' + (isTransformer ? ' <span class="pill pill-transformer">Transformer</span>' : '') + '</td>' +
     '<td><code class="host-code">' + esc(host) + '</code></td>' +
     '<td class="center status-cell"><span class="pill pill-ok">Active</span></td>' +
-    '<td class="url-cell"><a href="' + esc(guest) + '" target="_blank" rel="noopener" title="' + esc(guest) + '">' + esc(guest) + '</a></td>' +
+    '<td class="url-cell">' + (isTransformer ? ('<code title="' + esc(guest) + '">' + renderPatternTokens(guest) + '</code>') : ('<a href="' + esc(guest) + '" target="_blank" rel="noopener" title="' + esc(guest) + '">' + esc(guest) + '</a>')) + '</td>' +
     '<td class="center">0</td>' +
-    '<td class="center pass-cell">' + (body.password ? '🔒' : '—') + '</td>' +
-    '<td class="center nowrap">' + esc(expiryText) + '</td>' +
+    '<td class="center pass-cell">' + (!isTransformer && body.password ? '🔒' : '—') + '</td>' +
+    '<td class="center nowrap">' + (isTransformer ? '—' : esc(expiryText)) + '</td>' +
     '<td class="center nowrap">' +
-      '<button class="btn btn-sm btn-secondary" onclick="copyLink(' + jsAttr(shortUrl) + ')" title="Copy short URL">📋 Copy</button> ' +
-      '<button class="btn btn-sm btn-secondary" onclick="openEditModal(' + jsAttr(host) + ', ' + jsAttr(slug) + ', ' + jsAttr(guest) + ', ' + jsAttr(body.expiresAt) + ', ' + jsAttr(folderSlug || null) + ')" title="Edit link">✏️ Edit</button> ' +
-      '<button class="btn btn-sm btn-secondary" onclick="toggleInactive(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Toggle active/inactive">⏸️</button> ' +
-      '<button class="btn btn-sm btn-danger" data-action="schedule-delete" style="display:none;" onclick="scheduleDeleteLink(' + jsAttr(host) + ', ' + jsAttr(slug) + ')" title="Schedule deletion (3 days)">🗑 Delete</button>' +
+      buildLinkRowActionsHtml(host, slug, guest, isTransformer ? null : body.expiresAt, isTransformer ? null : (folderSlug || null), 'active', isTransformer ? 'transformer' : 'link', createdId) +
     '</td>';
   tbody.insertBefore(tr, tbody.firstChild);
 
@@ -1027,4 +1332,3 @@ document.getElementById('createForm').addEventListener('submit', async function(
     `,
   );
 }
-

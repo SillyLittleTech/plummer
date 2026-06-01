@@ -28,6 +28,14 @@ function folderPrefix(host) {
   return `folder:${host}:`;
 }
 
+function transformerKey(host, id) {
+  return `transformer:${host}:${id}`;
+}
+
+function transformerPrefix(host) {
+  return `transformer:${host}:`;
+}
+
 export async function getFolder(env, host, folderSlug) {
   const h = normalizeHost(host);
   const direct = await parseJSON(await env.LINKIVERSE.get(folderKey(h, folderSlug)));
@@ -150,6 +158,63 @@ export async function deleteLink(env, host, slug) {
   await env.LINKIVERSE.delete(linkKey(h, slug));
 }
 
+export async function getTransformer(env, host, id) {
+  const h = normalizeHost(host);
+  return await parseJSON(await env.LINKIVERSE.get(transformerKey(h, id)));
+}
+
+export async function putTransformer(env, host, transformer) {
+  const h = normalizeHost(host);
+  const withHost = { ...transformer, host: h };
+  await env.LINKIVERSE.put(transformerKey(h, withHost.id), JSON.stringify(withHost));
+}
+
+export async function deleteTransformer(env, host, id) {
+  const h = normalizeHost(host);
+  await env.LINKIVERSE.delete(transformerKey(h, id));
+}
+
+export async function listTransformers(env, host) {
+  const h = normalizeHost(host);
+  const transformers = [];
+  let cursor;
+  do {
+    const page = await env.LINKIVERSE.list({ prefix: transformerPrefix(h), limit: 100, cursor });
+    for (const key of page.keys) {
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name));
+      if (parsed) transformers.push(parsed);
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  transformers.sort((a, b) => {
+    const ap = Number(a.priority ?? 100);
+    const bp = Number(b.priority ?? 100);
+    if (ap !== bp) return ap - bp;
+    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+  });
+  return transformers;
+}
+
+export async function getAllTransformers(env) {
+  const transformers = [];
+  let cursor;
+  do {
+    const page = await env.LINKIVERSE.list({ prefix: 'transformer:', limit: 100, cursor });
+    for (const key of page.keys) {
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name));
+      if (!parsed) continue;
+      if (!parsed.host) {
+        const parts = key.name.split(':');
+        if (parts.length >= 3) parsed.host = parts[1];
+      }
+      transformers.push(parsed);
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  transformers.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  return transformers;
+}
+
 /** Fetch all stored links (all hosts), handling KV list pagination. */
 export async function getAllLinks(env) {
   const links = [];
@@ -173,4 +238,3 @@ export async function getAllLinks(env) {
   links.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   return links;
 }
-

@@ -15,6 +15,7 @@ Built for [SillyLittleTech](https://sillylittle.tech) at `share.sillylittle.tech
 | 🔒 Password protection | Require a password before redirecting |
 | ⏰ Link expiry | Set an expiry date/time; expired links are cleaned up automatically |
 | 🗂️ Folders | Optional folder pages (e.g. `/referrals/`) that list links |
+| 🔁 Transformer links | Pattern-based redirects with `${1}`, `${2}`, and `${3}` substitutions |
 | 🧾 Audit log | Tracks create/update/delete events with actor IP |
 | ♻️ Safe deletes | Links are tombstoned and purged automatically after 3 days |
 | 🌙 Dark / light mode | Follows system preference with a manual toggle |
@@ -46,6 +47,16 @@ Links are stored in a Cloudflare KV namespace as JSON values under a host-scoped
   "createdAt":    1714500000000
 }
 ```
+
+Transformer links are stored separately as host-scoped pattern rules. In the
+admin create form, check **Transformer link** and use `${1}`, `${2}`, or `${3}`
+as path-segment placeholders:
+
+- `github/${1}` → `https://github.com/sillylittletech/${1}`
+- `repo/${1}/${2}` → `https://github.com/${1}/${2}`
+
+Exact short links and folders are checked before transformers, so existing
+links keep priority over broad patterns like `${1}`.
 
 ---
 
@@ -213,6 +224,10 @@ All API routes require HTTP Basic Auth (same credentials as the admin dashboard)
 | `PATCH` | `/api/links/:slug` | Update a link (destination, expiry, folder, password, status) |
 | `POST` | `/api/links/:slug/rename` | Rename a link slug |
 | `DELETE` | `/api/links/:slug?host=...` | Schedule deletion (3-day retention) |
+| `GET` | `/api/transformers?host=...` | List transformers for a host |
+| `POST` | `/api/transformers` | Create transformer |
+| `PATCH` | `/api/transformers/:id` | Update transformer pattern, target, or status |
+| `DELETE` | `/api/transformers/:id?host=...` | Delete transformer |
 | `GET` | `/api/folders?host=...` | List folders for a host |
 | `POST` | `/api/folders` | Create folder |
 | `PATCH` | `/api/folders/:slug` | Update folder (name, listingEnabled, password) |
