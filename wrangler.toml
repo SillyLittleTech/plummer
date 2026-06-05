@@ -36,5 +36,8 @@ invocation_logs = true
 # Example: ["share.sillylittle.tech","links.sillylittle.tech","links.share.sillylittle.tech"]
 ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\"]"
 
+[env.production]
+workers_dev = true
+
 [triggers]
 crons = ["0 * * * *"]
