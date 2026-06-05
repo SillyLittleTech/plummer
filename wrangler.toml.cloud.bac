@@ -4,6 +4,7 @@
 name = "plummer"
 main = "src/index.js"
 compatibility_date = "2025-04-01"
+workers_dev = true
 
 # ─── KV Namespace ────────────────────────────────────────────────────────────
 [[kv_namespaces]]
