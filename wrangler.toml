@@ -4,6 +4,7 @@
 name = "plummer"
 main = "src/index.js"
 compatibility_date = "2025-04-01"
+workers_dev = true
 
 # ─── KV Namespace ────────────────────────────────────────────────────────────
 [[kv_namespaces]]
@@ -35,9 +36,6 @@ invocation_logs = true
 # JSON array of hostnames allowed for link creation (and shown in the /admin dropdown).
 # Example: ["share.sillylittle.tech","links.sillylittle.tech","links.share.sillylittle.tech"]
 ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\"]"
-
-[env.production]
-workers_dev = true
 
 [triggers]
 crons = ["0 * * * *"]
