@@ -1,27 +1,27 @@
-import { htmlPage } from './shared.js';
-import { escHtml } from '../util.js';
+import { htmlPage } from './shared.js'
+import { escHtml } from '../util.js'
 
-export function folderListingPage({ origin, host, folder, links }) {
-  const title = folder?.name ? `${folder.name} — Plummer` : 'Folder — Plummer';
-  const safeName = folder?.name ? escHtml(folder.name) : escHtml(folder?.slug ?? 'Folder');
-  const base = new URL(origin);
-  base.host = host;
+export function folderListingPage ({ origin, host, folder, links }) {
+  const title = folder?.name ? `${folder.name} — Plummer` : 'Folder — Plummer'
+  const safeName = folder?.name ? escHtml(folder.name) : escHtml(folder?.slug ?? 'Folder')
+  const base = new URL(origin)
+  base.host = host
 
   const rows = links.length === 0
-    ? `<tr><td colspan="4" class="empty-row">No links in this folder yet.</td></tr>`
+    ? '<tr><td colspan="4" class="empty-row">No links in this folder yet.</td></tr>'
     : links.map((link) => {
-      const shortUrl = `${base.origin}/${link.slug}`;
+      const shortUrl = `${base.origin}/${link.slug}`
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
-        : '—';
-      const status = link.status || 'active';
+        : '—'
+      const status = link.status || 'active'
       return `<tr>
         <td><a href="${escHtml(shortUrl)}"><code>${escHtml(link.slug)}</code></a></td>
         <td class="url-cell"><a href="${escHtml(link.guest)}" target="_blank" rel="noopener">${escHtml(link.guest)}</a></td>
         <td class="center">${escHtml(status)}</td>
         <td class="center nowrap">${escHtml(expiry)}</td>
-      </tr>`;
-    }).join('');
+      </tr>`
+    }).join('')
 
   return htmlPage(
     title,
@@ -77,7 +77,6 @@ export function folderListingPage({ origin, host, folder, links }) {
     .url-cell { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .empty-row { text-align: center; padding: 28px; opacity: 0.6; font-style: italic; }
     code { font-family: ui-monospace, "Cascadia Code", monospace; }
-    `,
-  );
+    `
+  )
 }
-

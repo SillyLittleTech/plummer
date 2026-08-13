@@ -1,5 +1,5 @@
 // Shared HTML/CSS primitives used by all pages.
-import { escHtml } from '../util.js';
+import { escHtml } from '../util.js'
 
 // ─── Shared CSS (based on SillyLittleTech lander / pasCurtain) ──────────────
 const SHARED_CSS = `
@@ -152,7 +152,7 @@ const SHARED_CSS = `
   .toast.show { transform: translateY(0); opacity: 1; }
   .toast.toast-error { border-color: var(--danger-color); }
   .toast.toast-ok { border-color: var(--success-color); }
-`;
+`
 
 // ─── Theme toggle script ─────────────────────────────────────────────────────
 const THEME_SCRIPT = `
@@ -179,7 +179,7 @@ const THEME_SCRIPT = `
     if(btn) btn.addEventListener('click', toggle);
   });
 })();
-`;
+`
 
 const TOGGLE_BTN = `<button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
   <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -194,11 +194,11 @@ const TOGGLE_BTN = `<button class="theme-toggle" id="themeToggle" aria-label="To
   <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
   </svg>
-</button>`;
+</button>`
 
 // ─── HTML page wrapper ───────────────────────────────────────────────────────
-export function htmlPage(title, bodyContent, extraCss = '', extraScript = '') {
-  const safeTitle = escHtml(title ?? '');
+export function htmlPage (title, bodyContent, extraCss = '', extraScript = '') {
+  const safeTitle = escHtml(title ?? '')
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -216,6 +216,5 @@ export function htmlPage(title, bodyContent, extraCss = '', extraScript = '') {
   ${bodyContent}
   <script>${THEME_SCRIPT}${extraScript}</script>
 </body>
-</html>`;
+</html>`
 }
-

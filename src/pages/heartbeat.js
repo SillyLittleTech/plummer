@@ -1,4 +1,4 @@
-export function heartbeatPage() {
+export function heartbeatPage () {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -112,5 +112,5 @@ export function heartbeatPage() {
     </div>
   </div>
 </body>
-</html>`;
+</html>`
 }

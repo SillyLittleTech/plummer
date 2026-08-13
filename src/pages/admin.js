@@ -1,75 +1,105 @@
-import { htmlPage } from './shared.js';
-import { escHtml } from '../util.js';
+import { htmlPage } from './shared.js'
+import { escHtml } from '../util.js'
 
-export function adminPage(links, origin, allowedHosts = []) {
+export function adminPage (links, origin, allowedHosts = []) {
   const hosts = Array.isArray(allowedHosts) && allowedHosts.length > 0
     ? allowedHosts
-    : [new URL(origin).host];
+    : [new URL(origin).host]
   const renderPatternTokens = (value) => escHtml(value).replace(
     /\$\{([1-3])\}/g,
-    '<span class="var-token var-token-$1">&#36;{$1}</span>',
-  );
+    '<span class="var-token var-token-$1">&#36;{$1}</span>'
+  )
 
   const rows = links.length === 0
-    ? `<tr><td colspan="8" class="empty-row">No links yet — create one above!</td></tr>`
+    ? '<tr><td colspan="8" class="empty-row">No links yet — create one above!</td></tr>'
     : links.map((link) => {
-      const isTransformer = link.type === 'transformer';
+      const isTransformer = link.type === 'transformer'
+
+      const isImage = link.type === 'image'
+      const typePill = isTransformer
+        ? ' <span class="pill pill-transformer">Transformer</span>'
+        : (isImage ? ' <span class="pill" style="background:#10b981;color:white;border-color:#059669;">Image</span>' : '')
+
       const expiry = link.expiresAt
         ? new Date(link.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
-        : '—';
-      const currentOrigin = new URL(origin);
-      const currentHost = currentOrigin.host;
-      const linkHost = link.host ? String(link.host) : currentHost;
+        : '—'
+      const currentOrigin = new URL(origin)
+      const currentHost = currentOrigin.host
+      const linkHost = link.host ? String(link.host) : currentHost
       const shortUrl = (linkHost === currentHost)
         ? `${origin}/${link.slug}`
-        : `https://${linkHost}/${link.slug}`;
-      const guestJs = escHtml(JSON.stringify(link.guest ?? ''));
-      const expiresAtJs = escHtml(JSON.stringify(link.expiresAt ?? null));
-      const status = link.status || 'active';
+        : `https://${linkHost}/${link.slug}`
+      const guestJs = escHtml(JSON.stringify(link.guest ?? ''))
+      const expiresAtJs = escHtml(JSON.stringify(link.expiresAt ?? null))
+      const status = link.status || 'active'
       const statusBadge =
-        status === 'active' ? '<span class="pill pill-ok">Active</span>' :
-        status === 'inactive' ? '<span class="pill pill-warn">Inactive</span>' :
-        '<span class="pill pill-danger">Deleted</span>';
+        status === 'active'
+          ? '<span class="pill pill-ok">Active</span>'
+          : status === 'inactive'
+            ? '<span class="pill pill-warn">Inactive</span>'
+            : '<span class="pill pill-danger">Deleted</span>'
 
-      const folderSlugAttr = escHtml(link.folderSlug ?? '');
-      const typeAttr = isTransformer ? 'transformer' : 'link';
-      const idAttr = escHtml(isTransformer ? link.id : link.slug);
+      const folderSlugAttr = escHtml(link.folderSlug ?? '')
+      const typeAttr = isTransformer ? 'transformer' : 'link'
+      const idAttr = escHtml(isTransformer ? link.id : link.slug)
       return `<tr data-slug="${escHtml(link.slug)}" data-host="${escHtml(linkHost)}" data-status="${escHtml(status)}" data-folder-slug="${folderSlugAttr}" data-type="${typeAttr}" data-id="${idAttr}">
-          <td><code class="slug-code">${isTransformer ? renderPatternTokens(link.slug) : escHtml(link.slug)}</code>${isTransformer ? ' <span class="pill pill-transformer">Transformer</span>' : ''}</td>
+          <td><code class="slug-code">${isTransformer ? renderPatternTokens(link.slug) : escHtml(link.slug)}</code>${typePill}</td>
           <td class="host-cell"><code class="host-code">${escHtml(linkHost)}</code></td>
           <td class="center status-cell">${statusBadge}</td>
-          <td class="url-cell">
-            ${isTransformer
-              ? `<code title="${escHtml(link.guest)}">${renderPatternTokens(link.guest)}</code>`
-              : `<a href="${escHtml(link.guest)}" target="_blank" rel="noopener"
-               title="${escHtml(link.guest)}">${escHtml(link.guest)}</a>`}
-          </td>
+          <td class="url-cell">${isTransformer ? `<code title="${escHtml(link.guest)}">${renderPatternTokens(link.guest)}</code>` : (isImage ? '<em>Image Data</em>' : `<a href="${escHtml(link.guest)}" target="_blank" rel="noopener" title="${escHtml(link.guest)}">${escHtml(link.guest)}</a>`)}</td>
           <td class="center">${link.clicks ?? 0}</td>
           <td class="center pass-cell">${isTransformer ? '—' : (link.passwordHash ? '🔒' : '—')}</td>
           <td class="center nowrap">${expiry}</td>
           <td class="center nowrap">
             <button class="btn btn-sm btn-secondary"
-              onclick="copyLink(${escHtml(JSON.stringify(shortUrl))})"
-              title="Copy short URL" ${isTransformer ? 'disabled' : ''}>📋 Copy</button>
+              style="display:none;">📋 Copy</button>
             <button class="btn btn-sm btn-secondary"
-              onclick="openEditModal(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))}, ${guestJs}, ${expiresAtJs}, ${escHtml(JSON.stringify(link.folderSlug ?? null))}, ${escHtml(JSON.stringify(typeAttr))}, ${escHtml(JSON.stringify(isTransformer ? link.id : link.slug))})"
-              title="Edit link">✏️ Edit</button>
+              style="display:none;">✏️ Edit</button>
             <button class="btn btn-sm btn-secondary"
-              onclick="toggleInactive(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(isTransformer ? link.id : link.slug))}, ${escHtml(JSON.stringify(typeAttr))})"
-              title="Toggle active/inactive">⏸️</button>
-            <button class="btn btn-sm btn-danger" data-action="schedule-delete"
-              style="${isTransformer || status === 'inactive' ? '' : 'display:none;'}"
-              onclick="${isTransformer
-                ? `deleteTransformer(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.id))})`
-                : `scheduleDeleteLink(${escHtml(JSON.stringify(linkHost))}, ${escHtml(JSON.stringify(link.slug))})`}"
-              title="${isTransformer ? 'Delete transformer' : 'Schedule deletion (3 days)'}">🗑 Delete</button>
+              style="display:none;">⏸️</button>
+            ${buildLinkRowActionsHtml(linkHost, link.slug, link.guest, link.expiresAt, link.folderSlug, status, link.type, isTransformer ? link.id : link.slug)}
           </td>
-        </tr>`;
-    }).join('');
+        </tr>`
+    }).join('')
 
   return htmlPage(
     'Plummer — Admin',
     `<div class="admin-wrap">
+
+  <style>
+    .admin-nav {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 12px;
+    }
+    .admin-nav a {
+      text-decoration: none;
+      color: var(--text-color);
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 6px;
+    }
+    .admin-nav a.active {
+      background-color: var(--accent-color);
+      color: white;
+    }
+    .admin-nav a:hover:not(.active) {
+      background-color: var(--card-hover);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+
+  <div class="admin-nav">
+    <a href="#" class="tab-link active" data-target="tab-links">Links & Transformers</a>
+    <a href="#" class="tab-link" data-target="tab-apikeys">API Keys</a>
+  </div>
+
+  <div id="tab-links" class="tab-content active">
+
   <header class="admin-header">
     <a href="/" class="back-link">← Plummer</a>
     <h1>Link Dashboard</h1>
@@ -110,14 +140,25 @@ export function adminPage(links, origin, allowedHosts = []) {
           <p class="hint" id="guestHint" style="display:none;"></p>
         </div>
       </div>
+
       <div class="form-options-row">
         <label class="transformer-toggle" title="Transformer links use &#36;{1}, &#36;{2}, and &#36;{3} as matched path parts, then substitute those values into the destination.">
           <input type="checkbox" id="isTransformer" name="isTransformer" />
           <span>Transformer link</span>
         </label>
-        <div id="transformerPreview" class="transformer-preview" style="display:none;"></div>
+        <label class="transformer-toggle" style="margin-left: 12px;" title="Upload an image instead of providing a URL.">
+          <input type="checkbox" id="isImage" name="isImage" />
+          <span>Image</span>
+        </label>
+      </div>
+      <div class="form-grid" id="imageUploadGrid" style="display:none;">
+        <div class="form-group" style="grid-column: span 2;">
+          <label for="imageUpload">Upload Image (Max 5MB)</label>
+          <input class="input" type="file" id="imageUpload" name="image" accept="image/*" />
+        </div>
       </div>
       <div class="form-row">
+
         <div class="form-group">
           <label for="expiresAt">Expires at <span class="opt">(optional)</span></label>
           <input class="input" type="datetime-local" id="expiresAt" name="expiresAt" />
@@ -719,7 +760,7 @@ function copyLink(url) {
 }
 
 /** Rebuild action buttons so slugs in onclick match after rename. */
-function buildLinkRowActionsHtml(host, slug, guest, expiresAtMs, folderSlug, status, type, id) {
+function buildLinkRowActionsHtml(linkHost, link.slug, link.guest, link.expiresAt, link.folderSlug, status, link.type, isTransformer ? link.id : link.slug)(host, slug, guest, expiresAtMs, folderSlug, status, type, id) {
   const isTransformer = type === 'transformer';
   const actionId = id || slug;
   const co = new URL(ORIGIN);
@@ -1080,6 +1121,692 @@ document.getElementById('guest')?.addEventListener('input', updateTransformerMod
 
 // Initial hide of deleted rows
 document.addEventListener('DOMContentLoaded', () => {
+
+let apiKeysLoaded = false;
+
+document.querySelectorAll('.tab-link').forEach(link => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    link.classList.add('active');
+    document.getElementById(link.dataset.target).classList.add('active');
+
+    if (link.dataset.target === 'tab-apikeys' && !apiKeysLoaded) {
+      apiKeysLoaded = true;
+      loadApiKeys();
+    }
+  });
+});
+
+document.getElementById('refreshApiKeysBtn')?.addEventListener('click', loadApiKeys);
+
+async function loadApiKeys() {
+  const tbody = document.getElementById('apiKeysBody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">Loading...</td></tr>';
+
+  try {
+    const host = document.getElementById('apiKeyHost').value;
+    const res = await fetch('/api/keys?host=' + encodeURIComponent(host));
+    if (!res.ok) throw new Error('Failed to fetch keys');
+    const keys = await res.json();
+
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">No API keys found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = keys.map(k => {
+      const expStr = k.expiresAt ? new Date(k.expiresAt).toLocaleString() : 'Never';
+      const perms = (k.permissions || []).join(', ');
+
+      return '<tr data-id="' + escHtml(k.id) + '" data-host="' + escHtml(k.host) + '">' +
+        '<td><strong>' + escHtml(k.name) + '</strong></td>' +
+        '<td><code>' + escHtml(k.host) + '</code></td>' +
+        '<td><small>' + escHtml(perms) + '</small></td>' +
+        '<td>' + escHtml(expStr) + '</td>' +
+        '<td>' +
+          '<button type="button" class="btn btn-sm btn-danger" onclick="revokeApiKey(\'' + escHtml(k.id) + '\', \'' + escHtml(k.host) + '\')">Revoke</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center; color: var(--danger-color);">Error loading keys: ' + escHtml(err.message) + '</td></tr>';
+  }
+}
+
+window.revokeApiKey = async function(id, host) {
+  if (!confirm('Are you sure you want to revoke this API key? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/keys/' + encodeURIComponent(id) + '?host=' + encodeURIComponent(host), { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to revoke key');
+    showToast('API Key revoked');
+    loadApiKeys();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+};
+
+document.getElementById('createApiKeyForm')?.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('apiKeyFormError');
+  const successEl = document.getElementById('apiKeySuccess');
+  const btn = document.getElementById('createApiKeyBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const fd = new FormData(e.target);
+  const host = fd.get('host');
+  const name = fd.get('name');
+  const expiresAtRaw = fd.get('expiresAt');
+  const permissions = Array.from(fd.getAll('permissions'));
+
+  if (permissions.length === 0) {
+    errEl.textContent = 'Please select at least one permission.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const body = {
+    host,
+    name,
+    permissions,
+    expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to create API key');
+
+    document.getElementById('apiKeyDisplay').value = data.token;
+    successEl.style.display = 'flex';
+    e.target.reset();
+
+    // Default checked state for permissions since reset clears them
+    e.target.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    // Restore host
+    document.getElementById('apiKeyHost').value = host;
+
+    loadApiKeys();
+
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Key';
+  }
+});
+
+document.getElementById('apiKeyHost')?.addEventListener('change', loadApiKeys);
+
+
+function updateTransformerMode() {
+  const isT = document.getElementById('isTransformer')?.checked;
+  const isI = document.getElementById('isImage')?.checked;
+
+  const guestEl = document.getElementById('guest');
+  const slugHint = document.getElementById('slugHint');
+  const guestHint = document.getElementById('guestHint');
+
+  if (isI) {
+    if (document.getElementById('isTransformer')) {
+      document.getElementById('isTransformer').checked = false;
+      document.getElementById('isTransformer').disabled = true;
+    }
+
+    if (document.getElementById('imageUploadGrid')) document.getElementById('imageUploadGrid').style.display = 'grid';
+    if (guestEl) {
+      guestEl.parentElement.style.display = 'none';
+      guestEl.removeAttribute('required');
+    }
+
+    if (document.getElementById('folderSlug')) document.getElementById('folderSlug').disabled = false;
+    if (document.getElementById('expiresAt')) document.getElementById('expiresAt').disabled = false;
+    if (document.getElementById('password')) document.getElementById('password').disabled = false;
+
+  } else if (isT) {
+    if (document.getElementById('isImage')) {
+      document.getElementById('isImage').checked = false;
+      document.getElementById('isImage').disabled = true;
+    }
+
+    if (document.getElementById('imageUploadGrid')) document.getElementById('imageUploadGrid').style.display = 'none';
+    if (guestEl) {
+      guestEl.parentElement.style.display = 'block';
+      guestEl.setAttribute('required', 'true');
+      guestEl.type = 'text';
+      guestEl.placeholder = 'https://example.com/${1}';
+    }
+    if (slugHint) slugHint.innerHTML = 'Use <code>${1}</code>, <code>${2}</code>, <code>${3}</code> to capture path segments.';
+    if (guestHint) {
+      guestHint.style.display = 'block';
+      guestHint.innerHTML = 'Substitute <code>${1}</code> into the destination URL.';
+    }
+
+    if (document.getElementById('folderSlug')) {
+      document.getElementById('folderSlug').value = '';
+      document.getElementById('folderSlug').disabled = true;
+    }
+    if (document.getElementById('expiresAt')) {
+      document.getElementById('expiresAt').value = '';
+      document.getElementById('expiresAt').disabled = true;
+    }
+    if (document.getElementById('password')) {
+      document.getElementById('password').value = '';
+      document.getElementById('password').disabled = true;
+    }
+  } else {
+    if (document.getElementById('isImage')) document.getElementById('isImage').disabled = false;
+    if (document.getElementById('isTransformer')) document.getElementById('isTransformer').disabled = false;
+
+    if (document.getElementById('imageUploadGrid')) document.getElementById('imageUploadGrid').style.display = 'none';
+    if (guestEl) {
+      guestEl.parentElement.style.display = 'block';
+      guestEl.setAttribute('required', 'true');
+      guestEl.type = 'url';
+      guestEl.placeholder = 'https://example.com';
+    }
+    if (slugHint) slugHint.innerHTML = 'Letters, numbers, hyphens and underscores only.';
+    if (guestHint) guestHint.style.display = 'none';
+
+    if (document.getElementById('folderSlug')) document.getElementById('folderSlug').disabled = false;
+    if (document.getElementById('expiresAt')) document.getElementById('expiresAt').disabled = false;
+    if (document.getElementById('password')) document.getElementById('password').disabled = false;
+  }
+}
+
+// Override original form submission with FormData
+document.getElementById('createForm')?.addEventListener('submit', async function(e) {
+  e.preventDefault();
+
+document.getElementById('createForm')?.addEventListener('submit', async function(e) {
+  // Override inside DOMContentLoaded to win the listener battle.
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  const errEl = document.getElementById('formError');
+  errEl.style.display = 'none';
+  const fd = new FormData(e.target);
+  const host = fd.get('host').trim();
+  const slug = fd.get('slug').trim();
+  const folderSlug = (fd.get('folderSlug') || '').trim();
+  const expiresAtRaw = fd.get('expiresAt');
+  const password = fd.get('password');
+  const isTransformer = document.getElementById('isTransformer')?.checked || false;
+  const isImage = document.getElementById('isImage')?.checked || false;
+  let guest = fd.get('guest');
+  if (guest) guest = guest.trim();
+
+  let reqOpts = {};
+
+  if (isImage) {
+    const file = fd.get('image');
+    if (!file || !file.size) {
+       errEl.textContent = 'Please select an image file.';
+       errEl.style.display = '';
+       return;
+    }
+    reqOpts = {
+      method: 'POST',
+      body: fd
+    };
+    fd.append('type', 'image');
+    if (expiresAtRaw) fd.set('expiresAt', new Date(expiresAtRaw).getTime());
+    else fd.delete('expiresAt');
+  } else {
+    const body = {
+      host,
+      slug,
+      guest,
+      folderSlug: folderSlug || null,
+      expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+      password: password || null,
+    };
+    if (isTransformer) {
+      body.type = 'transformer';
+      body.isTransformer = true;
+      body.folderSlug = null;
+      body.expiresAt = null;
+      body.password = null;
+    }
+
+    reqOpts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    };
+  }
+
+  const btn = document.getElementById('createBtn');
+  btn.disabled = true;
+  btn.textContent = isTransformer ? 'Creating transformer…' : (isImage ? 'Uploading image…' : 'Creating…');
+
+  const r = await fetch('/api/links', reqOpts);
+  const d = await r.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Create Link';
+
+  if (!r.ok) {
+    errEl.textContent = d.error || 'Failed to create link.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const createdId = d.id || slug;
+  showToast(isTransformer
+    ? ('Transformer created: ' + host + '/' + slug)
+    : (isImage ? 'Image uploaded: ' + host + '/' + slug : 'Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug))));
+  e.target.reset();
+  updateTransformerMode();
+  setTimeout(() => location.reload(), 1500); // Reload to fetch fresh table data easily
+}, true); // Use capture to intercept the original listener
+
+});
+
+
+
+let apiKeysLoaded = false;
+
+document.querySelectorAll('.tab-link').forEach(link => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    link.classList.add('active');
+    document.getElementById(link.dataset.target).classList.add('active');
+
+    if (link.dataset.target === 'tab-apikeys' && !apiKeysLoaded) {
+      apiKeysLoaded = true;
+      loadApiKeys();
+    }
+  });
+});
+
+document.getElementById('refreshApiKeysBtn')?.addEventListener('click', loadApiKeys);
+
+async function loadApiKeys() {
+  const tbody = document.getElementById('apiKeysBody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">Loading...</td></tr>';
+
+  try {
+    const host = document.getElementById('apiKeyHost').value;
+    const res = await fetch('/api/keys?host=' + encodeURIComponent(host));
+    if (!res.ok) throw new Error('Failed to fetch keys');
+    const keys = await res.json();
+
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">No API keys found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = keys.map(k => {
+      const expStr = k.expiresAt ? new Date(k.expiresAt).toLocaleString() : 'Never';
+      const perms = (k.permissions || []).join(', ');
+
+      return '<tr data-id="' + escHtml(k.id) + '" data-host="' + escHtml(k.host) + '">' +
+        '<td><strong>' + escHtml(k.name) + '</strong></td>' +
+        '<td><code>' + escHtml(k.host) + '</code></td>' +
+        '<td><small>' + escHtml(perms) + '</small></td>' +
+        '<td>' + escHtml(expStr) + '</td>' +
+        '<td>' +
+          '<button type="button" class="btn btn-sm btn-danger" onclick="revokeApiKey(\'' + escHtml(k.id) + '\', \'' + escHtml(k.host) + '\')">Revoke</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center; color: var(--danger-color);">Error loading keys: ' + escHtml(err.message) + '</td></tr>';
+  }
+}
+
+window.revokeApiKey = async function(id, host) {
+  if (!confirm('Are you sure you want to revoke this API key? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/keys/' + encodeURIComponent(id) + '?host=' + encodeURIComponent(host), { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to revoke key');
+    showToast('API Key revoked');
+    loadApiKeys();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+};
+
+document.getElementById('createApiKeyForm')?.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('apiKeyFormError');
+  const successEl = document.getElementById('apiKeySuccess');
+  const btn = document.getElementById('createApiKeyBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const fd = new FormData(e.target);
+  const host = fd.get('host');
+  const name = fd.get('name');
+  const expiresAtRaw = fd.get('expiresAt');
+  const permissions = Array.from(fd.getAll('permissions'));
+
+  if (permissions.length === 0) {
+    errEl.textContent = 'Please select at least one permission.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const body = {
+    host,
+    name,
+    permissions,
+    expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to create API key');
+
+    document.getElementById('apiKeyDisplay').value = data.token;
+    successEl.style.display = 'flex';
+    e.target.reset();
+
+    // Default checked state for permissions since reset clears them
+    e.target.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    // Restore host
+    document.getElementById('apiKeyHost').value = host;
+
+    loadApiKeys();
+
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Key';
+  }
+});
+
+document.getElementById('apiKeyHost')?.addEventListener('change', loadApiKeys);
+
+
+
+let apiKeysLoaded = false;
+
+document.querySelectorAll('.tab-link').forEach(link => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    link.classList.add('active');
+    document.getElementById(link.dataset.target).classList.add('active');
+
+    if (link.dataset.target === 'tab-apikeys' && !apiKeysLoaded) {
+      apiKeysLoaded = true;
+      loadApiKeys();
+    }
+  });
+});
+
+document.getElementById('refreshApiKeysBtn')?.addEventListener('click', loadApiKeys);
+
+async function loadApiKeys() {
+  const tbody = document.getElementById('apiKeysBody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">Loading...</td></tr>';
+
+  try {
+    const host = document.getElementById('apiKeyHost').value;
+    const res = await fetch('/api/keys?host=' + encodeURIComponent(host));
+    if (!res.ok) throw new Error('Failed to fetch keys');
+    const keys = await res.json();
+
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">No API keys found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = keys.map(k => {
+      const expStr = k.expiresAt ? new Date(k.expiresAt).toLocaleString() : 'Never';
+      const perms = (k.permissions || []).join(', ');
+
+      return '<tr data-id="' + escHtml(k.id) + '" data-host="' + escHtml(k.host) + '">' +
+        '<td><strong>' + escHtml(k.name) + '</strong></td>' +
+        '<td><code>' + escHtml(k.host) + '</code></td>' +
+        '<td><small>' + escHtml(perms) + '</small></td>' +
+        '<td>' + escHtml(expStr) + '</td>' +
+        '<td>' +
+          '<button type="button" class="btn btn-sm btn-danger" onclick="revokeApiKey(\'' + escHtml(k.id) + '\', \'' + escHtml(k.host) + '\')">Revoke</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center; color: var(--danger-color);">Error loading keys: ' + escHtml(err.message) + '</td></tr>';
+  }
+}
+
+window.revokeApiKey = async function(id, host) {
+  if (!confirm('Are you sure you want to revoke this API key? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/keys/' + encodeURIComponent(id) + '?host=' + encodeURIComponent(host), { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to revoke key');
+    showToast('API Key revoked');
+    loadApiKeys();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+};
+
+document.getElementById('createApiKeyForm')?.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('apiKeyFormError');
+  const successEl = document.getElementById('apiKeySuccess');
+  const btn = document.getElementById('createApiKeyBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const fd = new FormData(e.target);
+  const host = fd.get('host');
+  const name = fd.get('name');
+  const expiresAtRaw = fd.get('expiresAt');
+  const permissions = Array.from(fd.getAll('permissions'));
+
+  if (permissions.length === 0) {
+    errEl.textContent = 'Please select at least one permission.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const body = {
+    host,
+    name,
+    permissions,
+    expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to create API key');
+
+    document.getElementById('apiKeyDisplay').value = data.token;
+    successEl.style.display = 'flex';
+    e.target.reset();
+
+    // Default checked state for permissions since reset clears them
+    e.target.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    // Restore host
+    document.getElementById('apiKeyHost').value = host;
+
+    loadApiKeys();
+
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Key';
+  }
+});
+
+document.getElementById('apiKeyHost')?.addEventListener('change', loadApiKeys);
+
+
+
+let apiKeysLoaded = false;
+
+document.querySelectorAll('.tab-link').forEach(link => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    link.classList.add('active');
+    document.getElementById(link.dataset.target).classList.add('active');
+
+    if (link.dataset.target === 'tab-apikeys' && !apiKeysLoaded) {
+      apiKeysLoaded = true;
+      loadApiKeys();
+    }
+  });
+});
+
+document.getElementById('refreshApiKeysBtn')?.addEventListener('click', loadApiKeys);
+
+async function loadApiKeys() {
+  const tbody = document.getElementById('apiKeysBody');
+  tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">Loading...</td></tr>';
+
+  try {
+    const host = document.getElementById('apiKeyHost').value;
+    const res = await fetch('/api/keys?host=' + encodeURIComponent(host));
+    if (!res.ok) throw new Error('Failed to fetch keys');
+    const keys = await res.json();
+
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center;">No API keys found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = keys.map(k => {
+      const expStr = k.expiresAt ? new Date(k.expiresAt).toLocaleString() : 'Never';
+      const perms = (k.permissions || []).join(', ');
+
+      return '<tr data-id="' + escHtml(k.id) + '" data-host="' + escHtml(k.host) + '">' +
+        '<td><strong>' + escHtml(k.name) + '</strong></td>' +
+        '<td><code>' + escHtml(k.host) + '</code></td>' +
+        '<td><small>' + escHtml(perms) + '</small></td>' +
+        '<td>' + escHtml(expStr) + '</td>' +
+        '<td>' +
+          '<button type="button" class="btn btn-danger btn-sm" onclick="revokeApiKey(\'' + escHtml(k.id) + '\', \'' + escHtml(k.host) + '\')">Revoke</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="text-align:center; color: var(--danger-color);">Error loading keys: ' + escHtml(err.message) + '</td></tr>';
+  }
+}
+
+window.revokeApiKey = async function(id, host) {
+  if (!confirm('Are you sure you want to revoke this API key? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/keys/' + encodeURIComponent(id) + '?host=' + encodeURIComponent(host), { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to revoke key');
+    showToast('API Key revoked');
+    loadApiKeys();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+};
+
+document.getElementById('createApiKeyForm')?.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('apiKeyFormError');
+  const successEl = document.getElementById('apiKeySuccess');
+  const btn = document.getElementById('createApiKeyBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const fd = new FormData(e.target);
+  const host = fd.get('host');
+  const name = fd.get('name');
+  const expiresAtRaw = fd.get('expiresAt');
+  const permissions = Array.from(fd.getAll('permissions'));
+
+  if (permissions.length === 0) {
+    errEl.textContent = 'Please select at least one permission.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const body = {
+    host,
+    name,
+    permissions,
+    expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to create API key');
+
+    document.getElementById('apiKeyDisplay').value = data.token;
+    successEl.style.display = 'flex';
+    e.target.reset();
+
+    // Default checked state for permissions since reset clears them
+    e.target.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    // Restore host
+    document.getElementById('apiKeyHost').value = host;
+
+    loadApiKeys();
+
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Key';
+  }
+});
+
+document.getElementById('apiKeyHost')?.addEventListener('change', loadApiKeys);
+
+
   refreshFoldersForHost(document.getElementById('host').value);
   refreshAudit();
   updateTransformerMode();
@@ -1104,7 +1831,8 @@ document.getElementById('editCancelBtn2').addEventListener('click', (e) => {
   closeEditModal();
 });
 
-document.getElementById('editForm').addEventListener('submit', async function(e) {
+
+document.getElementById('editForm')?.addEventListener('submit', async function(e) {
   e.preventDefault();
   const errEl = document.getElementById('editError');
   errEl.style.display = 'none';
@@ -1131,6 +1859,57 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host, slug: newSlug, guest, type: 'transformer' }),
       });
+      const pd = await pr.json().catch(() => ({}));
+      if (!pr.ok) throw new Error(pd.error || 'Update failed');
+      showToast('Updated transformer: ' + host + '/' + newSlug);
+      setTimeout(() => location.reload(), 500);
+      return;
+    }
+
+    let currentSlug = oldSlug;
+
+    if (newSlug && newSlug !== oldSlug) {
+      const rr = await fetch('/api/links/' + encodeURIComponent(oldSlug) + '/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, newSlug }),
+      });
+      const rd = await rr.json().catch(() => ({}));
+      if (!rr.ok) throw new Error(rd.error || 'Rename failed');
+      currentSlug = rd.slug || newSlug;
+    }
+
+    const patchBody = {
+      host,
+      expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+    };
+    if (editType !== 'image') {
+      patchBody.guest = guest;
+    }
+
+    patchBody.folderSlug = folderSlug || null;
+    if (clearPassword) patchBody.password = null;
+    else if (password) patchBody.password = password;
+
+    const pr = await fetch('/api/links/' + encodeURIComponent(currentSlug), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patchBody),
+    });
+    const pd = await pr.json().catch(() => ({}));
+    if (!pr.ok) throw new Error(pd.error || 'Update failed');
+
+    showToast('Updated: ' + currentSlug);
+    setTimeout(() => location.reload(), 500);
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to update link.';
+    errEl.style.display = '';
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save changes';
+  }
+});
+
       const pd = await pr.json().catch(() => ({}));
       if (!pr.ok) throw new Error(pd.error || 'Update failed');
 
@@ -1178,11 +1957,15 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
       document.getElementById('editOldSlug').value = currentSlug;
     }
 
+
     const patchBody = {
       host,
-      guest,
       expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
     };
+    if (editType !== 'image') {
+      patchBody.guest = guest;
+    }
+
     patchBody.folderSlug = folderSlug || null;
     if (clearPassword) patchBody.password = null;
     else if (password) patchBody.password = password;
@@ -1198,12 +1981,17 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
     // Update destination cell + expiry cell + pass cell
     const row = document.querySelector('[data-slug="' + currentSlug + '"][data-host="' + host + '"]');
     if (row) {
+
       const destCell = row.querySelector('.url-cell a');
-      if (destCell) {
+      const urlCell = row.querySelector('.url-cell');
+      if (editType === 'image') {
+         if (urlCell) urlCell.innerHTML = '<em>Image Data</em>';
+      } else if (destCell) {
         destCell.href = guest;
         destCell.title = guest;
         destCell.textContent = guest;
       }
+
       const expiryCell = row.querySelector('td.center.nowrap');
       if (expiryCell) {
         expiryCell.textContent = expiresAtRaw
@@ -1235,6 +2023,7 @@ document.getElementById('editForm').addEventListener('submit', async function(e)
   }
 });
 
+
 document.getElementById('createForm').addEventListener('submit', async function(e) {
   e.preventDefault();
   const errEl = document.getElementById('formError');
@@ -1242,37 +2031,60 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const fd = new FormData(e.target);
   const host = fd.get('host').trim();
   const slug = fd.get('slug').trim();
-  const guest = fd.get('guest').trim();
   const folderSlug = (fd.get('folderSlug') || '').trim();
   const expiresAtRaw = fd.get('expiresAt');
   const password = fd.get('password');
   const isTransformer = document.getElementById('isTransformer')?.checked || false;
+  const isImage = document.getElementById('isImage')?.checked || false;
+  let guest = fd.get('guest');
+  if (guest) guest = guest.trim();
 
-  const body = {
-    host,
-    slug,
-    guest,
-    folderSlug: folderSlug || null,
-    expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
-    password: password || null,
-  };
-  if (isTransformer) {
-    body.type = 'transformer';
-    body.isTransformer = true;
-    body.folderSlug = null;
-    body.expiresAt = null;
-    body.password = null;
+  let reqOpts = {};
+
+  if (isImage) {
+    const file = fd.get('image');
+    if (!file || !file.size) {
+       errEl.textContent = 'Please select an image file.';
+       errEl.style.display = '';
+       return;
+    }
+    // We send FormData directly for image uploads
+    reqOpts = {
+      method: 'POST',
+      body: fd
+    };
+    fd.append('type', 'image');
+    if (expiresAtRaw) fd.set('expiresAt', new Date(expiresAtRaw).getTime());
+    else fd.delete('expiresAt');
+  } else {
+    const body = {
+      host,
+      slug,
+      guest,
+      folderSlug: folderSlug || null,
+      expiresAt: expiresAtRaw ? new Date(expiresAtRaw).getTime() : null,
+      password: password || null,
+    };
+    if (isTransformer) {
+      body.type = 'transformer';
+      body.isTransformer = true;
+      body.folderSlug = null;
+      body.expiresAt = null;
+      body.password = null;
+    }
+
+    reqOpts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    };
   }
 
   const btn = document.getElementById('createBtn');
   btn.disabled = true;
-  btn.textContent = isTransformer ? 'Creating transformer…' : 'Creating…';
+  btn.textContent = isTransformer ? 'Creating transformer…' : (isImage ? 'Uploading image…' : 'Creating…');
 
-  const r = await fetch('/api/links', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const r = await fetch('/api/links', reqOpts);
   const d = await r.json().catch(() => ({}));
   btn.disabled = false;
   btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Create Link';
@@ -1286,7 +2098,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const createdId = d.id || slug;
   showToast(isTransformer
     ? ('Transformer created: ' + host + '/' + slug)
-    : ('Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug))));
+    : (isImage ? 'Image uploaded: ' + host + '/' + slug : 'Created: ' + (host === new URL(ORIGIN).host ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug))));
   e.target.reset();
   updateTransformerMode();
 
@@ -1296,8 +2108,8 @@ document.getElementById('createForm').addEventListener('submit', async function(
   const emptyRow = tbody.querySelector('tr:not(#filterEmptyRow) .empty-row');
   if (emptyRow) emptyRow.closest('tr').remove();
 
-  const expiryText = body.expiresAt
-    ? new Date(body.expiresAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
+  const expiryText = expiresAtRaw
+    ? new Date(expiresAtRaw).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
     : '—';
   const shortUrl = (host === new URL(ORIGIN).host) ? (ORIGIN + '/' + slug) : ('https://' + host + '/' + slug);
   const tr = document.createElement('tr');
@@ -1305,23 +2117,27 @@ document.getElementById('createForm').addEventListener('submit', async function(
   tr.dataset.host = host;
   tr.dataset.status = 'active';
   tr.dataset.folderSlug = isTransformer ? '' : (folderSlug || '');
-  tr.dataset.type = isTransformer ? 'transformer' : 'link';
+  tr.dataset.type = isTransformer ? 'transformer' : (isImage ? 'image' : 'link');
   tr.dataset.id = createdId;
 
   function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
+  let typePill = '';
+  if (isTransformer) typePill = ' <span class="pill pill-transformer">Transformer</span>';
+  if (isImage) typePill = ' <span class="pill" style="background:#10b981;color:white;border-color:#059669;">Image</span>';
+
   tr.innerHTML =
-    '<td><code class="slug-code">' + (isTransformer ? renderPatternTokens(slug) : esc(slug)) + '</code>' + (isTransformer ? ' <span class="pill pill-transformer">Transformer</span>' : '') + '</td>' +
+    '<td><code class="slug-code">' + (isTransformer ? renderPatternTokens(slug) : esc(slug)) + '</code>' + typePill + '</td>' +
     '<td><code class="host-code">' + esc(host) + '</code></td>' +
     '<td class="center status-cell"><span class="pill pill-ok">Active</span></td>' +
-    '<td class="url-cell">' + (isTransformer ? ('<code title="' + esc(guest) + '">' + renderPatternTokens(guest) + '</code>') : ('<a href="' + esc(guest) + '" target="_blank" rel="noopener" title="' + esc(guest) + '">' + esc(guest) + '</a>')) + '</td>' +
+    '<td class="url-cell">' + (isTransformer ? ('<code title="' + esc(guest) + '">' + renderPatternTokens(guest) + '</code>') : (isImage ? '<em>Image Data</em>' : ('<a href="' + esc(guest) + '" target="_blank" rel="noopener" title="' + esc(guest) + '">' + esc(guest) + '</a>'))) + '</td>' +
     '<td class="center">0</td>' +
-    '<td class="center pass-cell">' + (!isTransformer && body.password ? '🔒' : '—') + '</td>' +
+    '<td class="center pass-cell">' + (!isTransformer && password ? '🔒' : '—') + '</td>' +
     '<td class="center nowrap">' + (isTransformer ? '—' : esc(expiryText)) + '</td>' +
     '<td class="center nowrap">' +
-      buildLinkRowActionsHtml(host, slug, guest, isTransformer ? null : body.expiresAt, isTransformer ? null : (folderSlug || null), 'active', isTransformer ? 'transformer' : 'link', createdId) +
+      buildLinkRowActionsHtml(host, slug, guest || '', isTransformer || isImage ? null : new Date(expiresAtRaw).getTime(), isTransformer ? null : (folderSlug || null), 'active', isTransformer ? 'transformer' : (isImage ? 'image' : 'link'), createdId) +
     '</td>';
   tbody.insertBefore(tr, tbody.firstChild);
 
@@ -1329,6 +2145,7 @@ document.getElementById('createForm').addEventListener('submit', async function(
   if (badge) badge.textContent = parseInt(badge.textContent || '0', 10) + 1;
   applyRowVisibility();
 });
-    `,
-  );
+
+    `
+  )
 }

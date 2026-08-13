@@ -1,7 +1,7 @@
-import { APP_VERSION } from '../constants.js';
-import { htmlPage } from './shared.js';
+import { APP_VERSION } from '../constants.js'
+import { htmlPage } from './shared.js'
 
-export function homePage(origin) {
+export function homePage (origin) {
   return htmlPage(
     'Plummer — Link Shortener',
     `<main class="home-main">
@@ -103,7 +103,6 @@ export function homePage(origin) {
     @media (max-width: 400px) {
       .features { grid-template-columns: 1fr; }
     }
-    `,
-  );
+    `
+  )
 }
-

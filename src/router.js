@@ -1,4 +1,4 @@
-import { RESERVED } from './constants.js';
+import { RESERVED } from './constants.js'
 import {
   deleteFolder,
   deleteLink,
@@ -15,49 +15,55 @@ import {
   putFolder,
   putLink,
   putTransformer,
-} from './kv.js';
-import { adminPage } from './pages/admin.js';
-import { homePage } from './pages/home.js';
-import { deletedPage, expiredPage, inactivePage, misconfiguredPage, notFoundPage, passwordPage } from './pages/errors.js';
-import { folderListingPage } from './pages/folders.js';
-import { heartbeatPage } from './pages/heartbeat.js';
-import { checkAdminAuth, unauthorizedResponse } from './security.js';
-import { isValidUrl, safeEqual, sha256 } from './util.js';
-import { getActor, listAudit, writeAudit } from './audit.js';
-import { matchTransformer, validateTransformerInput } from './transformers.js';
+  getApiKey,
+  putApiKey,
+  deleteApiKey,
+  listApiKeys,
+  getImageData,
+  putImageData
+} from './kv.js'
+import { adminPage } from './pages/admin.js'
+import { homePage } from './pages/home.js'
+import { deletedPage, expiredPage, inactivePage, notFoundPage, passwordPage } from './pages/errors.js'
+import { folderListingPage } from './pages/folders.js'
+import { heartbeatPage } from './pages/heartbeat.js'
+import { checkAdminAuth, unauthorizedResponse, checkApiKeyAuth, apiUnauthorizedResponse } from './security.js'
+import { isValidUrl, safeEqual, sha256 } from './util.js'
+import { getActor, listAudit, writeAudit } from './audit.js'
+import { matchTransformer, validateTransformerInput } from './transformers.js'
 
-function randomId() {
+function randomId () {
   try {
-    return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+    return crypto.randomUUID().replace(/-/g, '').slice(0, 12)
   } catch {
-    const bytes = new Uint8Array(8);
-    crypto.getRandomValues(bytes);
-    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const bytes = new Uint8Array(8)
+    crypto.getRandomValues(bytes)
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('')
   }
 }
 
-function getAllowedHosts(env) {
-  const raw = env.ALLOWED_HOSTS_JSON;
-  if (!raw) return [];
+function getAllowedHosts (env) {
+  const raw = env.ALLOWED_HOSTS_JSON
+  if (!raw) return []
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((h) => normalizeHost(h)).filter(Boolean);
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((h) => normalizeHost(h)).filter(Boolean)
   } catch {
-    return [];
+    return []
   }
 }
 
-async function handleHomePage(origin) {
+async function handleHomePage (origin) {
   return new Response(homePage(origin), {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  });
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  })
 }
 
-async function handleAdminPage(_request, env, origin) {
-  const links = await getAllLinks(env);
-  const transformers = await getAllTransformers(env);
-  const allowedHosts = getAllowedHosts(env);
+async function handleAdminPage (_request, env, origin) {
+  const links = await getAllLinks(env)
+  const transformers = await getAllTransformers(env)
+  const allowedHosts = getAllowedHosts(env)
   const rows = [
     ...links.map((l) => ({ ...l, type: 'link' })),
     ...transformers.map((t) => ({
@@ -68,35 +74,70 @@ async function handleAdminPage(_request, env, origin) {
       passwordHash: null,
       expiresAt: null,
       folderSlug: null,
-      status: t.status ?? 'active',
-    })),
-  ].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      status: t.status ?? 'active'
+    }))
+  ].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
   return new Response(adminPage(rows, origin, allowedHosts), {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  });
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  })
 }
 
-async function handleAPI(request, env, pathname) {
-  const allowedHosts = getAllowedHosts(env);
-  const actor = getActor(request);
-  const requestHost = normalizeHost(request.headers.get('host') ?? new URL(request.url).host);
-  const debugEnabled = env.ENABLE_DEBUG_ENDPOINTS === true || env.ENABLE_DEBUG_ENDPOINTS === 'true';
+async function handleAPI (request, env, pathname) {
+  const allowedHosts = getAllowedHosts(env)
+  const actor = getActor(request)
+  const requestHost = normalizeHost(request.headers.get('host') ?? new URL(request.url).host)
+  const debugEnabled = env.ENABLE_DEBUG_ENDPOINTS === true || env.ENABLE_DEBUG_ENDPOINTS === 'true'
 
-  async function requireDebugAccess() {
-    if (!debugEnabled) return { ok: false, response: Response.json({ error: 'Not Found' }, { status: 404 }) };
-    // Defense-in-depth: require Basic Auth even if routing/auth changes later.
-    const ok = await checkAdminAuth(request, env);
-    if (!ok) return { ok: false, response: unauthorizedResponse() };
-    return { ok: true };
+  // General API Authentication
+  let apiKeyAuthResult = { valid: false }
+  const hasBearerToken = (request.headers.get('Authorization') ?? '').startsWith('Bearer ')
+
+  if (hasBearerToken) {
+    apiKeyAuthResult = await checkApiKeyAuth(request, env)
+    if (!apiKeyAuthResult.valid) {
+      return apiUnauthorizedResponse(apiKeyAuthResult.reason || 'Invalid API Key')
+    }
   }
 
-  function assertHostAllowed(host) {
-    if (!host) return { ok: false, response: Response.json({ error: 'host is required' }, { status: 400 }) };
+  // Check required permission based on HTTP method for API keys
+  function assertApiKeyPermission (permission, targetHost) {
+    if (!apiKeyAuthResult.valid) return { ok: true } // Allow basic auth / unauthenticated if not using API keys (handled later or disabled by default)
+
+    // Enforce host scope if the API key has a host configured
+    if (apiKeyAuthResult.key.host && apiKeyAuthResult.key.host !== targetHost) {
+      return { ok: false, response: apiUnauthorizedResponse('API Key is not authorized for this host') }
+    }
+
+    // Check permission
+    if (!apiKeyAuthResult.key.permissions || !apiKeyAuthResult.key.permissions.includes(permission)) {
+      return { ok: false, response: apiUnauthorizedResponse(`API Key missing '${permission}' permission`) }
+    }
+
+    return { ok: true }
+  }
+
+  // Basic API authorization wrapper: if REQUIRE_API_AUTH is true, enforce either basic auth or API key
+  const requireApiAuth = env.REQUIRE_API_AUTH === true || env.REQUIRE_API_AUTH === 'true'
+  if (requireApiAuth && !apiKeyAuthResult.valid) {
+    const ok = await checkAdminAuth(request, env)
+    if (!ok) return apiUnauthorizedResponse('Authentication required')
+  }
+
+  async function requireDebugAccess () {
+    if (!debugEnabled) return { ok: false, response: Response.json({ error: 'Not Found' }, { status: 404 }) }
+    // Defense-in-depth: require Basic Auth even if routing/auth changes later.
+    const ok = await checkAdminAuth(request, env)
+    if (!ok) return { ok: false, response: unauthorizedResponse() }
+    return { ok: true }
+  }
+
+  function assertHostAllowed (host) {
+    if (!host) return { ok: false, response: Response.json({ error: 'host is required' }, { status: 400 }) }
     if (allowedHosts.length > 0 && !allowedHosts.includes(host)) {
       return {
         ok: false,
-        response: Response.json({ error: `"${host}" is not an allowed host` }, { status: 400 }),
-      };
+        response: Response.json({ error: `"${host}" is not an allowed host` }, { status: 400 })
+      }
     }
     // Safer default: if no allowlist is configured, only allow the current request host.
     // This prevents creating/updating records under arbitrary host-scoped keys.
@@ -105,66 +146,66 @@ async function handleAPI(request, env, pathname) {
         ok: false,
         response: Response.json(
           { error: `Host "${host}" is not allowed (no ALLOWED_HOSTS_JSON configured; expected "${requestHost}")` },
-          { status: 400 },
-        ),
-      };
+          { status: 400 }
+        )
+      }
     }
-    return { ok: true };
+    return { ok: true }
   }
 
   // GET /api/debug/link?host=...&slug=...
   // Temporary debugging helper for KV key issues in dev.
   if (pathname === '/api/debug/link' && request.method === 'GET') {
-    const access = await requireDebugAccess();
-    if (!access.ok) return access.response;
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const slug = url.searchParams.get('slug');
-    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+    const access = await requireDebugAccess()
+    if (!access.ok) return access.response
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const slug = url.searchParams.get('slug')
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 })
 
     const keysToCheck = [
       `link:${host}:${slug}`,
       `link:${host.replace(/:\\d+$/, '')}:${slug}`,
-      `link:${slug}`,
-    ];
+      `link:${slug}`
+    ]
 
-    const results = {};
+    const results = {}
     for (const k of keysToCheck) {
-      const v = await env.LINKIVERSE.get(k);
-      results[k] = v ? { found: true, sample: v.slice(0, 200) } : { found: false };
+      const v = await env.LINKIVERSE.get(k)
+      results[k] = v ? { found: true, sample: v.slice(0, 200) } : { found: false }
     }
 
     // Also list a few keys containing the slug suffix.
-    const matches = [];
-    let cursor;
+    const matches = []
+    let cursor
     do {
-      const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor });
+      const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor })
       for (const key of page.keys) {
-        if (key.name.endsWith(`:${slug}`) || key.name === `link:${slug}`) matches.push(key.name);
-        if (matches.length >= 20) break;
+        if (key.name.endsWith(`:${slug}`) || key.name === `link:${slug}`) matches.push(key.name)
+        if (matches.length >= 20) break
       }
-      if (matches.length >= 20) break;
-      cursor = page.list_complete ? undefined : page.cursor;
-    } while (cursor);
+      if (matches.length >= 20) break
+      cursor = page.list_complete ? undefined : page.cursor
+    } while (cursor)
 
-    return Response.json({ host, slug, keysToCheck, results, matches });
+    return Response.json({ host, slug, keysToCheck, results, matches })
   }
 
   // GET /api/debug/getlink?host=...&slug=...
   // Returns the result of getLink() vs a direct KV get for the canonical key.
   if (pathname === '/api/debug/getlink' && request.method === 'GET') {
-    const access = await requireDebugAccess();
-    if (!access.ok) return access.response;
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const slug = url.searchParams.get('slug');
-    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+    const access = await requireDebugAccess()
+    if (!access.ok) return access.response
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const slug = url.searchParams.get('slug')
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 })
 
-    const viaHelper = await getLink(env, host, slug);
-    const canonicalKey = `link:${host}:${slug}`;
-    const raw = await env.LINKIVERSE.get(canonicalKey);
-    let parsedRaw = null;
-    try { parsedRaw = raw ? JSON.parse(raw) : null; } catch { parsedRaw = null; }
+    const viaHelper = await getLink(env, host, slug)
+    const canonicalKey = `link:${host}:${slug}`
+    const raw = await env.LINKIVERSE.get(canonicalKey)
+    let parsedRaw = null
+    try { parsedRaw = raw ? JSON.parse(raw) : null } catch { parsedRaw = null }
 
     return Response.json({
       host,
@@ -174,21 +215,21 @@ async function handleAPI(request, env, pathname) {
       getLinkSample: viaHelper ? JSON.stringify(viaHelper).slice(0, 200) : null,
       directFound: Boolean(raw),
       directSample: raw ? raw.slice(0, 200) : null,
-      directParsedSample: parsedRaw ? JSON.stringify(parsedRaw).slice(0, 200) : null,
-    });
+      directParsedSample: parsedRaw ? JSON.stringify(parsedRaw).slice(0, 200) : null
+    })
   }
 
   // GET /api/debug/redirect-lookup?slug=...
   // Uses the incoming request's host/url like handleRedirect does, then runs getLink().
   if (pathname === '/api/debug/redirect-lookup' && request.method === 'GET') {
-    const access = await requireDebugAccess();
-    if (!access.ok) return access.response;
-    const url = new URL(request.url);
-    const slug = url.searchParams.get('slug');
-    if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 });
-    const hostHeader = request.headers.get('host');
-    const computedHost = normalizeHost(hostHeader ?? url.host);
-    const found = await getLink(env, computedHost, slug);
+    const access = await requireDebugAccess()
+    if (!access.ok) return access.response
+    const url = new URL(request.url)
+    const slug = url.searchParams.get('slug')
+    if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 })
+    const hostHeader = request.headers.get('host')
+    const computedHost = normalizeHost(hostHeader ?? url.host)
+    const found = await getLink(env, computedHost, slug)
     return Response.json({
       slug,
       hostHeader,
@@ -196,8 +237,8 @@ async function handleAPI(request, env, pathname) {
       computedHost,
       canonicalKey: `link:${computedHost}:${slug}`,
       found: Boolean(found),
-      sample: found ? JSON.stringify(found).slice(0, 200) : null,
-    });
+      sample: found ? JSON.stringify(found).slice(0, 200) : null
+    })
   }
 
   // POST /api/debug/force-delete?host=...&slug=...
@@ -209,79 +250,86 @@ async function handleAPI(request, env, pathname) {
   if (pathname === '/api/debug/force-delete' && request.method === 'POST') {
     // Require FORCE_DELETE_KEY to be configured for this operation to exist.
     if (!env.FORCE_DELETE_KEY) {
-      return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 });
+      return Response.json({ error: 'FORCE_DELETE_KEY is not configured' }, { status: 404 })
     }
 
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const slug = url.searchParams.get('slug');
-    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 });
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const slug = url.searchParams.get('slug')
+    if (!host || !slug) return Response.json({ error: 'host and slug are required' }, { status: 400 })
 
     // Allow either a matching FORCE_DELETE_KEY (header `x-force-delete-key` OR query `key`)
     // OR valid Basic Auth via `requireDebugAccess()`. This avoids applying blanket
     // Basic Auth rules to all `/api/*` routes while still protecting this destructive
     // endpoint.
-    const provided = request.headers.get('x-force-delete-key') ?? url.searchParams.get('key') ?? '';
-    const [providedHash, expectedHash] = await Promise.all([sha256(provided), sha256(env.FORCE_DELETE_KEY)]);
+    const provided = request.headers.get('x-force-delete-key') ?? url.searchParams.get('key') ?? ''
+    const [providedHash, expectedHash] = await Promise.all([sha256(provided), sha256(env.FORCE_DELETE_KEY)])
     if (!provided || !safeEqual(providedHash, expectedHash)) {
       // Fallback to Basic Auth for debugging access.
-      const access = await requireDebugAccess();
-      if (!access.ok) return access.response;
+      const access = await requireDebugAccess()
+      if (!access.ok) return access.response
     }
 
-    const before = await getLink(env, host, slug);
+    const before = await getLink(env, host, slug)
 
     // Delete canonical key + a couple compatibility keys (host without port, and legacy link:{slug})
-    await deleteLink(env, host, slug);
-    const noPort = host.replace(/:\\d+$/, '');
+    await deleteLink(env, host, slug)
+    const noPort = host.replace(/:\\d+$/, '')
     if (noPort && noPort !== host) {
-      await env.LINKIVERSE.delete(`link:${noPort}:${slug}`);
+      await env.LINKIVERSE.delete(`link:${noPort}:${slug}`)
     }
-    await env.LINKIVERSE.delete(`link:${slug}`);
+    await env.LINKIVERSE.delete(`link:${slug}`)
 
     await writeAudit(env, {
       action: 'link.forceDelete',
       host,
       slug,
       before,
-      actor,
-    });
+      actor
+    })
 
-    return Response.json({ ok: true, host, slug, existed: Boolean(before) });
+    return Response.json({ ok: true, host, slug, existed: Boolean(before) })
   }
 
   // GET /api/links
   if (pathname === '/api/links' && request.method === 'GET') {
-    const links = await getAllLinks(env);
-    return Response.json(links);
+    const permCheck = assertApiKeyPermission('read', requestHost) // Rough host check for read all
+    if (!permCheck.ok) return permCheck.response
+    const links = await getAllLinks(env)
+    return Response.json(links)
   }
 
   // GET /api/transformers?host=...
   if (pathname === '/api/transformers' && request.method === 'GET') {
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
-    return Response.json(await listTransformers(env, host));
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+    const permCheck = assertApiKeyPermission('read', host)
+    if (!permCheck.ok) return permCheck.response
+    return Response.json(await listTransformers(env, host))
   }
 
   // POST /api/transformers
   if (pathname === '/api/transformers' && request.method === 'POST') {
-    let body;
+    let body
     try {
-      body = await request.json();
+      body = await request.json()
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const normalizedHost = normalizeHost(body?.host);
-    const hostCheck = assertHostAllowed(normalizedHost);
-    if (!hostCheck.ok) return hostCheck.response;
+    const normalizedHost = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(normalizedHost)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const validation = validateTransformerInput(body?.sourcePattern ?? body?.slug, body?.targetTemplate ?? body?.guest);
-    if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+    const permCheck = assertApiKeyPermission('create', normalizedHost)
+    if (!permCheck.ok) return permCheck.response
 
-    const now = Date.now();
+    const validation = validateTransformerInput(body?.sourcePattern ?? body?.slug, body?.targetTemplate ?? body?.guest)
+    if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 })
+
+    const now = Date.now()
     const transformer = {
       id: randomId(),
       host: normalizedHost,
@@ -292,75 +340,78 @@ async function handleAPI(request, env, pathname) {
       priority: Number(body?.priority ?? 100),
       clicks: 0,
       createdAt: now,
-      updatedAt: now,
-    };
-    await putTransformer(env, normalizedHost, transformer);
+      updatedAt: now
+    }
+    await putTransformer(env, normalizedHost, transformer)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'transformer.create',
       host: normalizedHost,
       transformerId: transformer.id,
       slug: transformer.sourcePattern,
       after: transformer,
-      actor,
-    }));
-    return Response.json({ id: transformer.id, host: normalizedHost, slug: transformer.sourcePattern, type: 'transformer', message: 'Created' }, { status: 201 });
+      actor
+    }))
+    return Response.json({ id: transformer.id, host: normalizedHost, slug: transformer.sourcePattern, type: 'transformer', message: 'Created' }, { status: 201 })
   }
 
   // PATCH/DELETE /api/transformers/:id
-  const transformerMatch = pathname.match(/^\/api\/transformers\/([^/]+)$/);
+  const transformerMatch = pathname.match(/^\/api\/transformers\/([^/]+)$/)
   if (transformerMatch && (request.method === 'PATCH' || request.method === 'DELETE')) {
-    const id = decodeURIComponent(transformerMatch[1]);
-    let host;
-    let body = {};
+    const id = decodeURIComponent(transformerMatch[1])
+    let host
+    let body = {}
     if (request.method === 'PATCH') {
       try {
-        body = await request.json();
+        body = await request.json()
       } catch {
-        return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+        return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
       }
-      host = normalizeHost(body?.host);
+      host = normalizeHost(body?.host)
     } else {
-      const url = new URL(request.url);
-      host = normalizeHost(url.searchParams.get('host'));
+      const url = new URL(request.url)
+      host = normalizeHost(url.searchParams.get('host'))
     }
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const existing = await getTransformer(env, host, id);
-    if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
+    const permCheck = assertApiKeyPermission(request.method === 'DELETE' ? 'delete' : 'update', host)
+    if (!permCheck.ok) return permCheck.response
+
+    const existing = await getTransformer(env, host, id)
+    if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 })
 
     if (request.method === 'DELETE') {
-      await deleteTransformer(env, host, id);
+      await deleteTransformer(env, host, id)
       env.ctx?.waitUntil(writeAudit(env, {
         action: 'transformer.delete',
         host,
         transformerId: id,
         slug: existing.sourcePattern,
         before: existing,
-        actor,
-      }));
-      return Response.json({ message: 'Deleted' });
+        actor
+      }))
+      return Response.json({ message: 'Deleted' })
     }
 
-    const next = { ...existing, updatedAt: Date.now() };
+    const next = { ...existing, updatedAt: Date.now() }
     if (body?.status !== undefined) {
-      const s = body.status;
+      const s = body.status
       if (s !== 'active' && s !== 'inactive' && s !== 'deleted') {
-        return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
+        return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 })
       }
-      next.status = s;
+      next.status = s
     }
     if (body?.sourcePattern !== undefined || body?.targetTemplate !== undefined || body?.slug !== undefined || body?.guest !== undefined) {
-      const source = body?.sourcePattern ?? body?.slug ?? existing.sourcePattern;
-      const target = body?.targetTemplate ?? body?.guest ?? existing.targetTemplate;
-      const validation = validateTransformerInput(source, target);
-      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
-      next.sourcePattern = validation.sourcePattern;
-      next.targetTemplate = validation.targetTemplate;
-      next.name = body?.name || validation.sourcePattern;
+      const source = body?.sourcePattern ?? body?.slug ?? existing.sourcePattern
+      const target = body?.targetTemplate ?? body?.guest ?? existing.targetTemplate
+      const validation = validateTransformerInput(source, target)
+      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 })
+      next.sourcePattern = validation.sourcePattern
+      next.targetTemplate = validation.targetTemplate
+      next.name = body?.name || validation.sourcePattern
     }
 
-    await putTransformer(env, host, next);
+    await putTransformer(env, host, next)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'transformer.update',
       host,
@@ -368,57 +419,163 @@ async function handleAPI(request, env, pathname) {
       slug: next.sourcePattern,
       before: existing,
       after: next,
-      actor,
-    }));
-    return Response.json({ id, host, slug: next.sourcePattern, type: 'transformer', message: 'Updated' });
+      actor
+    }))
+    return Response.json({ id, host, slug: next.sourcePattern, type: 'transformer', message: 'Updated' })
+  }
+
+  // GET /api/keys?host=...
+  if (pathname === '/api/keys' && request.method === 'GET') {
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+
+    // Management endpoints always require full authentication, so basic auth or admin key.
+    // For simplicity, enforce Admin Auth for these endpoints, so regular keys cannot manage other keys.
+    const ok = await checkAdminAuth(request, env)
+    if (!ok) return apiUnauthorizedResponse('Admin authentication required')
+
+    const keys = await listApiKeys(env, host)
+    // Never return the secret hashes
+    return Response.json(keys.map(k => {
+      const { secretHash, ...rest } = k
+      return rest
+    }))
+  }
+
+  // POST /api/keys
+  if (pathname === '/api/keys' && request.method === 'POST') {
+    let body
+    try {
+      body = await request.json()
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+
+    const host = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+
+    const ok = await checkAdminAuth(request, env)
+    if (!ok) return apiUnauthorizedResponse('Admin authentication required')
+
+    const name = body?.name || 'API Key'
+    const permissions = Array.isArray(body?.permissions) ? body.permissions : ['create', 'read', 'update', 'delete']
+    const expiresAt = body?.expiresAt ? Number(body.expiresAt) : null
+
+    if (expiresAt && expiresAt < Date.now()) {
+      return Response.json({ error: 'expiresAt must be a future timestamp' }, { status: 400 })
+    }
+
+    const rawToken = randomId() + randomId()
+    const secretHash = await sha256(rawToken)
+
+    const apiKey = {
+      id: randomId(),
+      host,
+      name,
+      permissions,
+      expiresAt,
+      secretHash,
+      createdAt: Date.now()
+    }
+
+    const tokenStr = apiKey.id + '.' + rawToken
+
+    await putApiKey(env, host, apiKey)
+
+    env.ctx?.waitUntil(writeAudit(env, {
+      action: 'apikey.create',
+      host,
+      apiKeyId: apiKey.id,
+      actor
+    }))
+
+    // Return the formatted token only once upon creation
+    return Response.json({ id: apiKey.id, host, token: tokenStr, message: 'Created' }, { status: 201 })
+  }
+
+  // DELETE /api/keys/:id
+  const deleteKeyMatch = pathname.match(/^\/api\/keys\/([^/]+)$/)
+  if (deleteKeyMatch && request.method === 'DELETE') {
+    const id = decodeURIComponent(deleteKeyMatch[1])
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+
+    const ok = await checkAdminAuth(request, env)
+    if (!ok) return apiUnauthorizedResponse('Admin authentication required')
+
+    const existing = await getApiKey(env, host, id)
+    if (!existing) return Response.json({ error: 'API Key not found' }, { status: 404 })
+
+    await deleteApiKey(env, host, id)
+
+    env.ctx?.waitUntil(writeAudit(env, {
+      action: 'apikey.delete',
+      host,
+      apiKeyId: id,
+      actor
+    }))
+
+    return Response.json({ message: 'Deleted' })
   }
 
   // GET /api/audit
   if (pathname === '/api/audit' && request.method === 'GET') {
-    const url = new URL(request.url);
-    const limit = Math.min(300, Math.max(1, Number(url.searchParams.get('limit') || 100)));
-    return Response.json(await listAudit(env, { limit }));
+    const permCheck = assertApiKeyPermission('read', requestHost)
+    if (!permCheck.ok) return permCheck.response
+    const url = new URL(request.url)
+    const limit = Math.min(300, Math.max(1, Number(url.searchParams.get('limit') || 100)))
+    return Response.json(await listAudit(env, { limit }))
   }
 
   // GET /api/folders?host=...
   if (pathname === '/api/folders' && request.method === 'GET') {
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
-    return Response.json(await listFolders(env, host));
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+    const permCheck = assertApiKeyPermission('read', host)
+    if (!permCheck.ok) return permCheck.response
+    return Response.json(await listFolders(env, host))
   }
 
   // POST /api/folders
   if (pathname === '/api/folders' && request.method === 'POST') {
-    let body;
+    let body
     try {
-      body = await request.json();
+      body = await request.json()
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const host = normalizeHost(body?.host);
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
+    const host = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const slug = body?.slug;
-    const name = body?.name;
-    const listingEnabled = body?.listingEnabled !== false;
-    const password = body?.password ?? null;
+    const permCheck = assertApiKeyPermission('create', host)
+    if (!permCheck.ok) return permCheck.response
 
-    if (!slug || typeof slug !== 'string') return Response.json({ error: 'slug is required' }, { status: 400 });
+    const slug = body?.slug
+    const name = body?.name
+    const listingEnabled = body?.listingEnabled !== false
+    const password = body?.password ?? null
+
+    if (!slug || typeof slug !== 'string') return Response.json({ error: 'slug is required' }, { status: 400 })
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(slug)) {
-      return Response.json({ error: 'Folder slug may only contain letters, numbers, hyphens and underscores (max 64 chars)' }, { status: 400 });
+      return Response.json({ error: 'Folder slug may only contain letters, numbers, hyphens and underscores (max 64 chars)' }, { status: 400 })
     }
-    if (RESERVED.has(slug.toLowerCase())) return Response.json({ error: `"${slug}" is reserved` }, { status: 400 });
+    if (RESERVED.has(slug.toLowerCase())) return Response.json({ error: `"${slug}" is reserved` }, { status: 400 })
 
     // Prevent folder slug colliding with an existing link on that host.
-    const linkCollision = await getLink(env, host, slug);
-    if (linkCollision) return Response.json({ error: `Folder slug "${slug}" collides with an existing link` }, { status: 409 });
+    const linkCollision = await getLink(env, host, slug)
+    if (linkCollision) return Response.json({ error: `Folder slug "${slug}" collides with an existing link` }, { status: 409 })
 
-    const existingFolder = await getFolder(env, host, slug);
-    if (existingFolder) return Response.json({ error: `Folder "${slug}" already exists` }, { status: 409 });
+    const existingFolder = await getFolder(env, host, slug)
+    if (existingFolder) return Response.json({ error: `Folder "${slug}" already exists` }, { status: 409 })
 
     const folder = {
       slug,
@@ -426,105 +583,158 @@ async function handleAPI(request, env, pathname) {
       name: typeof name === 'string' && name.trim() ? name.trim() : slug,
       listingEnabled: !!listingEnabled,
       passwordHash: password ? await sha256(password) : null,
-      createdAt: Date.now(),
-    };
+      createdAt: Date.now()
+    }
 
-    await putFolder(env, host, folder);
+    await putFolder(env, host, folder)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'folder.create',
       host,
       folderSlug: slug,
       after: folder,
-      actor,
-    }));
-    return Response.json({ slug, host, message: 'Created' }, { status: 201 });
+      actor
+    }))
+    return Response.json({ slug, host, message: 'Created' }, { status: 201 })
   }
 
   // PATCH /api/folders/:slug
-  const patchFolderMatch = pathname.match(/^\/api\/folders\/([^/]+)$/);
+  const patchFolderMatch = pathname.match(/^\/api\/folders\/([^/]+)$/)
   if (patchFolderMatch && request.method === 'PATCH') {
-    const folderSlug = decodeURIComponent(patchFolderMatch[1]);
-    let body;
+    const folderSlug = decodeURIComponent(patchFolderMatch[1])
+    let body
     try {
-      body = await request.json();
+      body = await request.json()
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const host = normalizeHost(body?.host);
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
+    const host = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const existing = await getFolder(env, host, folderSlug);
-    if (!existing) return Response.json({ error: 'Folder not found' }, { status: 404 });
+    const permCheck = assertApiKeyPermission('update', host)
+    if (!permCheck.ok) return permCheck.response
 
-    const next = { ...existing };
+    const existing = await getFolder(env, host, folderSlug)
+    if (!existing) return Response.json({ error: 'Folder not found' }, { status: 404 })
+
+    const next = { ...existing }
     if (body?.name !== undefined) {
-      if (typeof body.name !== 'string' || !body.name.trim()) return Response.json({ error: 'name must be a non-empty string' }, { status: 400 });
-      next.name = body.name.trim();
+      if (typeof body.name !== 'string' || !body.name.trim()) return Response.json({ error: 'name must be a non-empty string' }, { status: 400 })
+      next.name = body.name.trim()
     }
-    if (body?.listingEnabled !== undefined) next.listingEnabled = !!body.listingEnabled;
+    if (body?.listingEnabled !== undefined) next.listingEnabled = !!body.listingEnabled
     if (body?.password !== undefined) {
-      if (body.password === null || body.password === '') next.passwordHash = null;
-      else if (typeof body.password === 'string') next.passwordHash = await sha256(body.password);
-      else return Response.json({ error: 'password must be a string or null' }, { status: 400 });
+      if (body.password === null || body.password === '') next.passwordHash = null
+      else if (typeof body.password === 'string') next.passwordHash = await sha256(body.password)
+      else return Response.json({ error: 'password must be a string or null' }, { status: 400 })
     }
 
-    await putFolder(env, host, next);
+    await putFolder(env, host, next)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'folder.update',
       host,
       folderSlug,
       before: existing,
       after: next,
-      actor,
-    }));
-    return Response.json({ slug: folderSlug, host, message: 'Updated' });
+      actor
+    }))
+    return Response.json({ slug: folderSlug, host, message: 'Updated' })
   }
 
   // DELETE /api/folders/:slug?host=...
-  const deleteFolderMatch = pathname.match(/^\/api\/folders\/([^/]+)$/);
+  const deleteFolderMatch = pathname.match(/^\/api\/folders\/([^/]+)$/)
   if (deleteFolderMatch && request.method === 'DELETE') {
-    const folderSlug = decodeURIComponent(deleteFolderMatch[1]);
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
+    const folderSlug = decodeURIComponent(deleteFolderMatch[1])
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const existing = await getFolder(env, host, folderSlug);
-    if (!existing) return Response.json({ error: 'Folder not found' }, { status: 404 });
+    const permCheck = assertApiKeyPermission('delete', host)
+    if (!permCheck.ok) return permCheck.response
 
-    await deleteFolder(env, host, folderSlug);
+    const existing = await getFolder(env, host, folderSlug)
+    if (!existing) return Response.json({ error: 'Folder not found' }, { status: 404 })
+
+    await deleteFolder(env, host, folderSlug)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'folder.delete',
       host,
       folderSlug,
       before: existing,
-      actor,
-    }));
-    return Response.json({ message: 'Deleted' });
+      actor
+    }))
+    return Response.json({ message: 'Deleted' })
   }
 
   // POST /api/links
   if (pathname === '/api/links' && request.method === 'POST') {
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    let body
+    let isMultipart = false
+    let formData
+    let imageBuffer
+    let imageMimeType
+    const contentType = request.headers.get('content-type') || ''
+
+    if (contentType.includes('multipart/form-data')) {
+      isMultipart = true
+      try {
+        formData = await request.formData()
+
+        const host = formData.get('host')
+        const slug = formData.get('slug')
+        const expiresAtRaw = formData.get('expiresAt')
+        const folderSlug = formData.get('folderSlug')
+        const password = formData.get('password')
+        const imageFile = formData.get('image')
+
+        if (!imageFile || !imageFile.size) {
+          return Response.json({ error: 'Image file is required for type image' }, { status: 400 })
+        }
+
+        if (imageFile.size > 5 * 1024 * 1024) { // 5MB hard limit
+          return Response.json({ error: 'Image exceeds the 5MB size limit' }, { status: 400 })
+        }
+
+        imageBuffer = await imageFile.arrayBuffer()
+        imageMimeType = imageFile.type
+
+        body = {
+          host,
+          slug,
+          type: 'image',
+          mimeType: imageMimeType,
+          expiresAt: expiresAtRaw ? Number(expiresAtRaw) : null,
+          folderSlug,
+          password
+        }
+      } catch (e) {
+        return Response.json({ error: 'Invalid multipart form data' }, { status: 400 })
+      }
+    } else {
+      try {
+        body = await request.json()
+      } catch {
+        return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+      }
     }
 
-    const { slug, guest, expiresAt, password, host, folderSlug } = body ?? {};
-    const isTransformer = body?.type === 'transformer' || body?.isTransformer === true;
-    const normalizedHost = normalizeHost(host);
-    const hostCheck = assertHostAllowed(normalizedHost);
-    if (!hostCheck.ok) return hostCheck.response;
+    const { slug, guest, expiresAt, password, host, folderSlug } = body ?? {}
+    const isTransformer = body?.type === 'transformer' || body?.isTransformer === true
+    const isImage = body?.type === 'image' || isMultipart
+    const normalizedHost = normalizeHost(host)
+    const hostCheck = assertHostAllowed(normalizedHost)
+    if (!hostCheck.ok) return hostCheck.response
+
+    const permCheck = assertApiKeyPermission('create', normalizedHost)
+    if (!permCheck.ok) return permCheck.response
 
     if (isTransformer) {
-      const validation = validateTransformerInput(slug, guest);
-      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
+      const validation = validateTransformerInput(slug, guest)
+      if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 })
 
-      const now = Date.now();
+      const now = Date.now()
       const transformer = {
         id: randomId(),
         host: normalizedHost,
@@ -535,68 +745,75 @@ async function handleAPI(request, env, pathname) {
         priority: Number(body?.priority ?? 100),
         clicks: 0,
         createdAt: now,
-        updatedAt: now,
-      };
-      await putTransformer(env, normalizedHost, transformer);
+        updatedAt: now
+      }
+      await putTransformer(env, normalizedHost, transformer)
       env.ctx?.waitUntil(writeAudit(env, {
         action: 'transformer.create',
         host: normalizedHost,
         transformerId: transformer.id,
         slug: transformer.sourcePattern,
         after: transformer,
-        actor,
-      }));
+        actor
+      }))
       return Response.json({
         id: transformer.id,
         slug: transformer.sourcePattern,
         host: normalizedHost,
         type: 'transformer',
-        message: 'Created',
-      }, { status: 201 });
+        message: 'Created'
+      }, { status: 201 })
     }
 
     if (!slug || typeof slug !== 'string') {
-      return Response.json({ error: 'slug is required' }, { status: 400 });
+      return Response.json({ error: 'slug is required' }, { status: 400 })
     }
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(slug)) {
       return Response.json(
         { error: 'Slug may only contain letters, numbers, hyphens and underscores (max 64 chars)' },
-        { status: 400 },
-      );
+        { status: 400 }
+      )
     }
     if (RESERVED.has(slug.toLowerCase())) {
-      return Response.json({ error: `"${slug}" is a reserved slug` }, { status: 400 });
+      return Response.json({ error: `"${slug}" is a reserved slug` }, { status: 400 })
     }
-    if (!guest || !isValidUrl(guest)) {
-      return Response.json({ error: 'A valid destination URL is required' }, { status: 400 });
+    if (!isImage && (!guest || !isValidUrl(guest))) {
+      return Response.json({ error: 'A valid destination URL is required' }, { status: 400 })
     }
     if (expiresAt !== undefined && expiresAt !== null) {
       if (typeof expiresAt !== 'number' || expiresAt < Date.now()) {
-        return Response.json({ error: 'expiresAt must be a future Unix timestamp (ms)' }, { status: 400 });
+        return Response.json({ error: 'expiresAt must be a future Unix timestamp (ms)' }, { status: 400 })
       }
     }
 
     if (folderSlug !== undefined && folderSlug !== null) {
-      if (typeof folderSlug !== 'string') return Response.json({ error: 'folderSlug must be a string or null' }, { status: 400 });
+      if (typeof folderSlug !== 'string') return Response.json({ error: 'folderSlug must be a string or null' }, { status: 400 })
       if (folderSlug && !(await getFolder(env, normalizedHost, folderSlug))) {
-        return Response.json({ error: `Folder "${folderSlug}" not found` }, { status: 400 });
+        return Response.json({ error: `Folder "${folderSlug}" not found` }, { status: 400 })
       }
     }
 
-    const existing = await getLink(env, normalizedHost, slug);
+    const existing = await getLink(env, normalizedHost, slug)
     if (existing) {
       return Response.json(
         { error: `Slug "${slug}" is already in use on ${normalizedHost}` },
-        { status: 409 },
-      );
+        { status: 409 }
+      )
     }
 
-    const passwordHash = password ? await sha256(password) : null;
+    // Store image buffer to KV if this is an image link
+    if (isImage && imageBuffer) {
+      await putImageData(env, normalizedHost, slug, imageBuffer)
+    }
+
+    const passwordHash = password ? await sha256(password) : null
 
     const link = {
       slug,
       host: normalizedHost,
-      guest,
+      type: isImage ? 'image' : 'link',
+      guest: isImage ? null : guest,
+      mimeType: isImage ? imageMimeType : null,
       passwordHash,
       expiresAt: expiresAt ?? null,
       folderSlug: folderSlug || null,
@@ -604,58 +821,61 @@ async function handleAPI(request, env, pathname) {
       createdAt: Date.now(),
       status: 'active',
       inactiveAt: null,
-      deletedAt: null,
-    };
-    await putLink(env, normalizedHost, link);
+      deletedAt: null
+    }
+    await putLink(env, normalizedHost, link)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'link.create',
       host: normalizedHost,
       slug,
       after: link,
-      actor,
-    }));
-    return Response.json({ slug, host: normalizedHost, message: 'Created' }, { status: 201 });
+      actor
+    }))
+    return Response.json({ slug, host: normalizedHost, type: link.type, message: 'Created' }, { status: 201 })
   }
 
   // PATCH /api/links/:slug
-  const patchMatch = pathname.match(/^\/api\/links\/([^/]+)$/);
+  const patchMatch = pathname.match(/^\/api\/links\/([^/]+)$/)
   if (patchMatch && request.method === 'PATCH') {
-    const slug = decodeURIComponent(patchMatch[1]);
-    let body;
+    const slug = decodeURIComponent(patchMatch[1])
+    let body
     try {
-      body = await request.json();
+      body = await request.json()
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const normalizedHost = normalizeHost(body?.host);
-    const hostCheck = assertHostAllowed(normalizedHost);
-    if (!hostCheck.ok) return hostCheck.response;
+    const normalizedHost = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(normalizedHost)
+    if (!hostCheck.ok) return hostCheck.response
+
+    const permCheck = assertApiKeyPermission('update', normalizedHost)
+    if (!permCheck.ok) return permCheck.response
 
     if (body?.type === 'transformer' || body?.isTransformer === true) {
-      const existing = await getTransformer(env, normalizedHost, slug);
-      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
-      const next = { ...existing, updatedAt: Date.now() };
+      const existing = await getTransformer(env, normalizedHost, slug)
+      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 })
+      const next = { ...existing, updatedAt: Date.now() }
 
       if (body?.status !== undefined) {
-        const s = body.status;
+        const s = body.status
         if (s !== 'active' && s !== 'inactive' && s !== 'deleted') {
-          return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
+          return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 })
         }
-        next.status = s;
+        next.status = s
       }
 
       if (body?.slug !== undefined || body?.guest !== undefined) {
-        const source = body?.slug !== undefined ? body.slug : existing.sourcePattern;
-        const target = body?.guest !== undefined ? body.guest : existing.targetTemplate;
-        const validation = validateTransformerInput(source, target);
-        if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
-        next.sourcePattern = validation.sourcePattern;
-        next.targetTemplate = validation.targetTemplate;
-        next.name = validation.sourcePattern;
+        const source = body?.slug !== undefined ? body.slug : existing.sourcePattern
+        const target = body?.guest !== undefined ? body.guest : existing.targetTemplate
+        const validation = validateTransformerInput(source, target)
+        if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 })
+        next.sourcePattern = validation.sourcePattern
+        next.targetTemplate = validation.targetTemplate
+        next.name = validation.sourcePattern
       }
 
-      await putTransformer(env, normalizedHost, next);
+      await putTransformer(env, normalizedHost, next)
       env.ctx?.waitUntil(writeAudit(env, {
         action: 'transformer.update',
         host: normalizedHost,
@@ -663,126 +883,129 @@ async function handleAPI(request, env, pathname) {
         slug: next.sourcePattern,
         before: existing,
         after: next,
-        actor,
-      }));
-      return Response.json({ id: slug, host: normalizedHost, slug: next.sourcePattern, type: 'transformer', message: 'Updated' });
+        actor
+      }))
+      return Response.json({ id: slug, host: normalizedHost, slug: next.sourcePattern, type: 'transformer', message: 'Updated' })
     }
 
-    const existing = await getLink(env, normalizedHost, slug);
-    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
+    const existing = await getLink(env, normalizedHost, slug)
+    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 })
 
-    const next = { ...existing };
+    const next = { ...existing }
 
     if (body?.status !== undefined) {
-      const s = body.status;
+      const s = body.status
       if (s !== 'active' && s !== 'inactive' && s !== 'deleted') {
-        return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 });
+        return Response.json({ error: 'status must be active, inactive, or deleted' }, { status: 400 })
       }
-      next.status = s;
-      const purgeMs = 3 * 24 * 60 * 60 * 1000;
+      next.status = s
+      const purgeMs = 3 * 24 * 60 * 60 * 1000
       if (s === 'active') {
-        next.inactiveAt = null;
-        next.deletedAt = null;
-        next.purgeAfter = null;
+        next.inactiveAt = null
+        next.deletedAt = null
+        next.purgeAfter = null
       } else if (s === 'inactive') {
-        next.inactiveAt = next.inactiveAt ?? Date.now();
-        next.deletedAt = null;
-        next.purgeAfter = null;
+        next.inactiveAt = next.inactiveAt ?? Date.now()
+        next.deletedAt = null
+        next.purgeAfter = null
       } else if (s === 'deleted') {
-        next.deletedAt = next.deletedAt ?? Date.now();
-        next.purgeAfter = Date.now() + purgeMs;
+        next.deletedAt = next.deletedAt ?? Date.now()
+        next.purgeAfter = Date.now() + purgeMs
       }
     }
 
     if (body?.folderSlug !== undefined) {
       if (body.folderSlug === null || body.folderSlug === '') {
-        next.folderSlug = null;
+        next.folderSlug = null
       } else if (typeof body.folderSlug === 'string') {
-        const f = await getFolder(env, normalizedHost, body.folderSlug);
-        if (!f) return Response.json({ error: `Folder "${body.folderSlug}" not found` }, { status: 400 });
-        next.folderSlug = body.folderSlug;
+        const f = await getFolder(env, normalizedHost, body.folderSlug)
+        if (!f) return Response.json({ error: `Folder "${body.folderSlug}" not found` }, { status: 400 })
+        next.folderSlug = body.folderSlug
       } else {
-        return Response.json({ error: 'folderSlug must be a string or null' }, { status: 400 });
+        return Response.json({ error: 'folderSlug must be a string or null' }, { status: 400 })
       }
     }
 
     if (body?.guest !== undefined) {
       if (!body.guest || typeof body.guest !== 'string' || !isValidUrl(body.guest)) {
-        return Response.json({ error: 'A valid destination URL is required' }, { status: 400 });
+        return Response.json({ error: 'A valid destination URL is required' }, { status: 400 })
       }
-      next.guest = body.guest;
+      next.guest = body.guest
     }
 
     if (body?.expiresAt !== undefined) {
       if (body.expiresAt === null) {
-        next.expiresAt = null;
+        next.expiresAt = null
       } else if (typeof body.expiresAt === 'number' && body.expiresAt >= Date.now()) {
-        next.expiresAt = body.expiresAt;
+        next.expiresAt = body.expiresAt
       } else {
-        return Response.json({ error: 'expiresAt must be null or a future Unix timestamp (ms)' }, { status: 400 });
+        return Response.json({ error: 'expiresAt must be null or a future Unix timestamp (ms)' }, { status: 400 })
       }
     }
 
     if (body?.password !== undefined) {
       if (body.password === null || body.password === '') {
-        next.passwordHash = null;
+        next.passwordHash = null
       } else if (typeof body.password === 'string') {
-        next.passwordHash = await sha256(body.password);
+        next.passwordHash = await sha256(body.password)
       } else {
-        return Response.json({ error: 'password must be a string or null' }, { status: 400 });
+        return Response.json({ error: 'password must be a string or null' }, { status: 400 })
       }
     }
 
-    await putLink(env, normalizedHost, next);
+    await putLink(env, normalizedHost, next)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'link.update',
       host: normalizedHost,
       slug,
       before: existing,
       after: next,
-      actor,
-    }));
-    return Response.json({ slug: next.slug, host: normalizedHost, message: 'Updated' });
+      actor
+    }))
+    return Response.json({ slug: next.slug, host: normalizedHost, message: 'Updated' })
   }
 
   // POST /api/links/:slug/rename
-  const renameMatch = pathname.match(/^\/api\/links\/([^/]+)\/rename$/);
+  const renameMatch = pathname.match(/^\/api\/links\/([^/]+)\/rename$/)
   if (renameMatch && request.method === 'POST') {
-    const oldSlug = decodeURIComponent(renameMatch[1]);
-    let body;
+    const oldSlug = decodeURIComponent(renameMatch[1])
+    let body
     try {
-      body = await request.json();
+      body = await request.json()
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const normalizedHost = normalizeHost(body?.host);
-    const hostCheck = assertHostAllowed(normalizedHost);
-    if (!hostCheck.ok) return hostCheck.response;
+    const normalizedHost = normalizeHost(body?.host)
+    const hostCheck = assertHostAllowed(normalizedHost)
+    if (!hostCheck.ok) return hostCheck.response
 
-    const newSlug = body?.newSlug;
+    const permCheck = assertApiKeyPermission('update', normalizedHost)
+    if (!permCheck.ok) return permCheck.response
+
+    const newSlug = body?.newSlug
     if (!newSlug || typeof newSlug !== 'string') {
-      return Response.json({ error: 'newSlug is required' }, { status: 400 });
+      return Response.json({ error: 'newSlug is required' }, { status: 400 })
     }
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(newSlug)) {
       return Response.json(
         { error: 'Slug may only contain letters, numbers, hyphens and underscores (max 64 chars)' },
-        { status: 400 },
-      );
+        { status: 400 }
+      )
     }
     if (RESERVED.has(newSlug.toLowerCase())) {
-      return Response.json({ error: `"${newSlug}" is a reserved slug` }, { status: 400 });
+      return Response.json({ error: `"${newSlug}" is a reserved slug` }, { status: 400 })
     }
 
-    const existing = await getLink(env, normalizedHost, oldSlug);
-    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
+    const existing = await getLink(env, normalizedHost, oldSlug)
+    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 })
 
-    const collision = await getLink(env, normalizedHost, newSlug);
-    if (collision) return Response.json({ error: `Slug "${newSlug}" is already in use` }, { status: 409 });
+    const collision = await getLink(env, normalizedHost, newSlug)
+    if (collision) return Response.json({ error: `Slug "${newSlug}" is already in use` }, { status: 409 })
 
-    const renamed = { ...existing, slug: newSlug };
-    await putLink(env, normalizedHost, renamed);
-    await deleteLink(env, normalizedHost, oldSlug);
+    const renamed = { ...existing, slug: newSlug }
+    await putLink(env, normalizedHost, renamed)
+    await deleteLink(env, normalizedHost, oldSlug)
 
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'link.rename',
@@ -791,40 +1014,43 @@ async function handleAPI(request, env, pathname) {
       newSlug,
       before: existing,
       after: renamed,
-      actor,
-    }));
+      actor
+    }))
 
-    return Response.json({ slug: newSlug, host: normalizedHost, message: 'Renamed' });
+    return Response.json({ slug: newSlug, host: normalizedHost, message: 'Renamed' })
   }
 
   // DELETE /api/links/:slug
-  const deleteMatch = pathname.match(/^\/api\/links\/([^/]+)$/);
+  const deleteMatch = pathname.match(/^\/api\/links\/([^/]+)$/)
   if (deleteMatch && request.method === 'DELETE') {
-    const slug = decodeURIComponent(deleteMatch[1]);
-    const url = new URL(request.url);
-    const host = normalizeHost(url.searchParams.get('host'));
-    const hostCheck = assertHostAllowed(host);
-    if (!hostCheck.ok) return hostCheck.response;
+    const slug = decodeURIComponent(deleteMatch[1])
+    const url = new URL(request.url)
+    const host = normalizeHost(url.searchParams.get('host'))
+    const hostCheck = assertHostAllowed(host)
+    if (!hostCheck.ok) return hostCheck.response
+
+    const permCheck = assertApiKeyPermission('delete', host)
+    if (!permCheck.ok) return permCheck.response
 
     if (url.searchParams.get('type') === 'transformer') {
-      const existing = await getTransformer(env, host, slug);
-      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 });
-      await deleteTransformer(env, host, slug);
+      const existing = await getTransformer(env, host, slug)
+      if (!existing) return Response.json({ error: 'Transformer not found' }, { status: 404 })
+      await deleteTransformer(env, host, slug)
       env.ctx?.waitUntil(writeAudit(env, {
         action: 'transformer.delete',
         host,
         transformerId: slug,
         slug: existing.sourcePattern,
         before: existing,
-        actor,
-      }));
-      return Response.json({ message: 'Deleted' });
+        actor
+      }))
+      return Response.json({ message: 'Deleted' })
     }
 
-    const existing = await getLink(env, host, slug);
-    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 });
+    const existing = await getLink(env, host, slug)
+    if (!existing) return Response.json({ error: 'Link not found' }, { status: 404 })
     if ((existing.status ?? 'active') !== 'inactive') {
-      return Response.json({ error: 'Link must be inactive before deletion can be scheduled' }, { status: 400 });
+      return Response.json({ error: 'Link must be inactive before deletion can be scheduled' }, { status: 400 })
     }
 
     // Always schedule purge for 3 days; no manual hard-delete.
@@ -832,194 +1058,212 @@ async function handleAPI(request, env, pathname) {
       ...existing,
       status: 'deleted',
       deletedAt: existing.deletedAt ?? Date.now(),
-      purgeAfter: Date.now() + 3 * 24 * 60 * 60 * 1000,
-    };
-    await putLink(env, host, next);
+      purgeAfter: Date.now() + 3 * 24 * 60 * 60 * 1000
+    }
+    await putLink(env, host, next)
     env.ctx?.waitUntil(writeAudit(env, {
       action: 'link.delete.scheduled',
       host,
       slug,
       before: existing,
       after: next,
-      actor,
-    }));
-    return Response.json({ message: 'Deletion scheduled (3-day retention)' });
+      actor
+    }))
+    return Response.json({ message: 'Deletion scheduled (3-day retention)' })
   }
 
-  return Response.json({ error: 'API route not found' }, { status: 404 });
+  return Response.json({ error: 'API route not found' }, { status: 404 })
 }
 
-async function handleTransformerRedirect(request, env) {
-  const url = new URL(request.url);
-  const hostHeader = request.headers.get('host');
-  const host = normalizeHost(hostHeader ?? url.host);
-  const transformers = await listTransformers(env, host);
+async function handleTransformerRedirect (request, env) {
+  const url = new URL(request.url)
+  const hostHeader = request.headers.get('host')
+  const host = normalizeHost(hostHeader ?? url.host)
+  const transformers = await listTransformers(env, host)
   for (const transformer of transformers) {
-    const match = matchTransformer(transformer, url.pathname);
-    if (!match) continue;
-    const updated = { ...transformer, clicks: (transformer.clicks ?? 0) + 1, updatedAt: Date.now() };
-    env.ctx?.waitUntil(putTransformer(env, host, updated));
-    return Response.redirect(match.target, 302);
+    const match = matchTransformer(transformer, url.pathname)
+    if (!match) continue
+    const updated = { ...transformer, clicks: (transformer.clicks ?? 0) + 1, updatedAt: Date.now() }
+    env.ctx?.waitUntil(putTransformer(env, host, updated))
+    return Response.redirect(match.target, 302)
   }
-  return null;
+  return null
 }
 
-async function handleRedirect(request, env, slug) {
-  const url = new URL(request.url);
+async function handleRedirect (request, env, slug) {
+  const url = new URL(request.url)
   // In Workers/Wrangler dev, Host may be absent; fall back to the URL host.
-  const hostHeader = request.headers.get('host');
-  const host = normalizeHost(hostHeader ?? url.host);
+  const hostHeader = request.headers.get('host')
+  const host = normalizeHost(hostHeader ?? url.host)
 
-  const maybeFolder = await getFolder(env, host, slug);
+  const maybeFolder = await getFolder(env, host, slug)
   if (maybeFolder && maybeFolder.listingEnabled !== false) {
     if (maybeFolder.passwordHash) {
       if (request.method === 'POST') {
-        let formData;
+        let formData
         try {
-          formData = await request.formData();
+          formData = await request.formData()
         } catch {
           return new Response(passwordPage(slug, false), {
             status: 200,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' },
-          });
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          })
         }
-        const submitted = formData.get('password') ?? '';
-        const submittedHash = await sha256(submitted);
+        const submitted = formData.get('password') ?? ''
+        const submittedHash = await sha256(submitted)
         if (!safeEqual(submittedHash, maybeFolder.passwordHash)) {
           return new Response(passwordPage(slug, true), {
             status: 403,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' },
-          });
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          })
         }
       } else {
         return new Response(passwordPage(slug, false), {
           status: 200,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        });
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        })
       }
     }
 
     const links = (await listLinksByFolder(env, host, maybeFolder.slug))
-      .filter((l) => (l.status ?? 'active') === 'active');
+      .filter((l) => (l.status ?? 'active') === 'active')
 
     return new Response(folderListingPage({ origin: url.origin, host, folder: maybeFolder, links }), {
       status: 200,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    })
   }
 
-  let link = await getLink(env, host, slug);
-  let resolvedHost = host;
+  let link = await getLink(env, host, slug)
+  let resolvedHost = host
   if (!link) {
     // Extra defensive lookup: in local dev we sometimes observe key mismatches despite the expected key existing.
     // Try a few host candidates directly against KV before giving up.
     const hostCandidates = [
       host,
       normalizeHost(url.host),
-      normalizeHost(hostHeader ?? ''),
-    ].filter(Boolean);
+      normalizeHost(hostHeader ?? '')
+    ].filter(Boolean)
     for (const h of hostCandidates) {
-      const raw = await env.LINKIVERSE.get(`link:${h}:${slug}`);
-      if (!raw) continue;
+      const raw = await env.LINKIVERSE.get(`link:${h}:${slug}`)
+      if (!raw) continue
       try {
-        link = JSON.parse(raw);
+        link = JSON.parse(raw)
       } catch {
-        link = null;
+        link = null
       }
       if (link) {
         // Migrate to canonical key for future reads
-        await putLink(env, h, link);
-        resolvedHost = h;
-        break;
+        await putLink(env, h, link)
+        resolvedHost = h
+        break
       }
     }
   }
   if (!link) {
     if (request.method === 'GET') {
-      const transformerResponse = await handleTransformerRedirect(request, env);
-      if (transformerResponse) return transformerResponse;
+      const transformerResponse = await handleTransformerRedirect(request, env)
+      if (transformerResponse) return transformerResponse
     }
-    const headers = { 'Content-Type': 'text/html; charset=utf-8' };
+    const headers = { 'Content-Type': 'text/html; charset=utf-8' }
     if ((request.headers.get('x-plummer-debug') ?? '') === '1') {
-      headers['X-Plummer-Debug-HostHeader'] = hostHeader ?? '';
-      headers['X-Plummer-Debug-UrlHost'] = url.host;
-      headers['X-Plummer-Debug-NormalizedHost'] = host;
-      headers['X-Plummer-Debug-Key'] = `link:${host}:${slug}`;
+      headers['X-Plummer-Debug-HostHeader'] = hostHeader ?? ''
+      headers['X-Plummer-Debug-UrlHost'] = url.host
+      headers['X-Plummer-Debug-NormalizedHost'] = host
+      headers['X-Plummer-Debug-Key'] = `link:${host}:${slug}`
     }
     return new Response(notFoundPage(), {
       status: 404,
-      headers,
-    });
+      headers
+    })
   }
 
   if (link.status === 'inactive') {
     return new Response(inactivePage(), {
       status: 404,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    })
   }
   if (link.status === 'deleted') {
     return new Response(deletedPage(), {
       status: 404,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    })
   }
 
   // Check link expiry
   if (link.expiresAt && Date.now() > link.expiresAt) {
     // Clean up the expired link from KV
-    await deleteLink(env, resolvedHost, slug);
+    await deleteLink(env, resolvedHost, slug)
     return new Response(expiredPage(), {
       status: 410,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    })
   }
 
   // Handle password-protected links
   if (link.passwordHash) {
     if (request.method === 'POST') {
-      let formData;
+      let formData
       try {
-        formData = await request.formData();
+        formData = await request.formData()
       } catch {
         return new Response(passwordPage(slug, false), {
           status: 200,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        });
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        })
       }
-      const submitted = formData.get('password') ?? '';
-      const submittedHash = await sha256(submitted);
+      const submitted = formData.get('password') ?? ''
+      const submittedHash = await sha256(submitted)
       if (!safeEqual(submittedHash, link.passwordHash)) {
         return new Response(passwordPage(slug, true), {
           status: 403,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        });
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        })
       }
       // Correct password — fall through to redirect
     } else {
       return new Response(passwordPage(slug, false), {
         status: 200,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      });
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      })
     }
   }
 
   // Increment click counter (best-effort; do not block the redirect)
-  const updated = { ...link, clicks: (link.clicks ?? 0) + 1 };
+  const updated = { ...link, clicks: (link.clicks ?? 0) + 1 }
   // Use waitUntil if available to avoid delaying the response
-  env.ctx?.waitUntil(putLink(env, resolvedHost, updated));
+  env.ctx?.waitUntil(putLink(env, resolvedHost, updated))
 
-  return Response.redirect(link.guest, 302);
+  if (link.type === 'image') {
+    const imageData = await getImageData(env, resolvedHost, slug)
+    if (!imageData) {
+      return new Response(notFoundPage(), {
+        status: 404,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      })
+    }
+
+    return new Response(imageData, {
+      status: 200,
+      headers: {
+        'Content-Type': link.mimeType || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=86400'
+      }
+    })
+  }
+
+  return Response.redirect(link.guest, 302)
 }
 
-export async function routeRequest(request, env) {
-  const url = new URL(request.url);
-  const { pathname } = url;
-  const origin = url.origin;
+export async function routeRequest (request, env) {
+  const url = new URL(request.url)
+  const { pathname } = url
+  const origin = url.origin
 
   // Homepage
   if (pathname === '/' && request.method === 'GET') {
-    return handleHomePage(origin);
+    return handleHomePage(origin)
   }
 
   // Note: local Basic Auth should NOT be applied to all `/api/*` routes by
@@ -1052,40 +1296,40 @@ export async function routeRequest(request, env) {
 
   // Admin dashboard
   if ((pathname === '/admin' || pathname === '/admin/') && request.method === 'GET') {
-    return handleAdminPage(request, env, origin);
+    return handleAdminPage(request, env, origin)
   }
 
   // Heartbeat check endpoint
   if ((pathname === '/heartbeat/check' || pathname === '/heartbeat/check/') && request.method === 'GET') {
     return new Response(heartbeatPage(), {
       status: 200,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    })
   }
 
   // Heartbeat redirect endpoint (redirects to /heartbeat/check/)
   if ((pathname === '/heartbeat' || pathname === '/heartbeat/') && request.method === 'GET') {
-    return Response.redirect(`${origin}/heartbeat/check/`, 301);
+    return Response.redirect(`${origin}/heartbeat/check/`, 301)
   }
 
   // REST API
   if (pathname.startsWith('/api/')) {
-    return handleAPI(request, env, pathname);
+    return handleAPI(request, env, pathname)
   }
 
   // Short-link redirect — slug must be alphanumeric/-/_
-  const slugMatch = pathname.match(/^\/([a-zA-Z0-9_-]+)\/?$/);
+  const slugMatch = pathname.match(/^\/([a-zA-Z0-9_-]+)\/?$/)
   if (slugMatch && (request.method === 'GET' || request.method === 'POST')) {
-    return handleRedirect(request, env, slugMatch[1]);
+    return handleRedirect(request, env, slugMatch[1])
   }
 
   if (request.method === 'GET') {
-    const transformerResponse = await handleTransformerRedirect(request, env);
-    if (transformerResponse) return transformerResponse;
+    const transformerResponse = await handleTransformerRedirect(request, env)
+    if (transformerResponse) return transformerResponse
   }
 
   return new Response(notFoundPage(), {
     status: 404,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  });
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  })
 }
