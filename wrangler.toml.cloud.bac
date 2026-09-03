@@ -19,7 +19,7 @@ preview_id = "00410bf2f1054283819de99e7958be89"
 #
 [[routes]]
 pattern = "share.slt.ong/*"
-zone_id = "77a159eb0b67f14afe2b1316968f6317a"
+zone_name = "slt.ong"
 
 
 # ─── Secrets (set via CLI, NOT in this file) ─────────────────────────────────
