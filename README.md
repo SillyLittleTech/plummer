@@ -2,7 +2,7 @@
 
 A simple, fast, open-source link shortener powered by **Cloudflare Workers** and **KV**.
 
-Built for [SillyLittleTech](https://sillylittle.tech) at `share.sillylittle.tech`, but designed as a reusable template for anyone who wants to host their own link shortener on Cloudflare's edge network.
+Built for [SillyLittleTech](https://slt.ong) at `share.slt.ong`, but designed as a reusable template for anyone who wants to host their own link shortener on Cloudflare's edge network.
 
 ---
 
@@ -26,7 +26,7 @@ Built for [SillyLittleTech](https://sillylittle.tech) at `share.sillylittle.tech
 ## How it works
 
 ```
-Visitor → share.sillylittle.tech/my-link
+Visitor → share.slt.ong/my-link
         → Cloudflare Worker (nearest edge PoP)
         → KV namespace LINKIVERSE
         → 302 redirect to destination URL
@@ -34,11 +34,11 @@ Visitor → share.sillylittle.tech/my-link
 
 Links are stored in a Cloudflare KV namespace as JSON values under a host-scoped key:
 
-- `link:{host}:{slug}` (e.g. `link:share.sillylittle.tech:my-link`)
+- `link:{host}:{slug}` (e.g. `link:share.slt.ong:my-link`)
 
 ```jsonc
 {
-  "host":         "share.sillylittle.tech",
+  "host":         "share.slt.ong",
   "slug":         "my-link",
   "guest":        "https://example.com",
   "passwordHash": null,          // SHA-256 of password, or null
@@ -130,7 +130,7 @@ Set `ALLOWED_HOSTS_JSON` in `wrangler.toml` as a JSON array of hostnames:
 
 ```toml
 [vars]
-ALLOWED_HOSTS_JSON = "[\"share.sillylittle.tech\",\"links.sillylittle.tech\",\"links.share.sillylittle.tech\"]"
+ALLOWED_HOSTS_JSON = "[\"share.slt.ong\",\"links.slt.ong\",\"links.share.slt.ong\"]"
 ```
 
 The `/admin` UI will show these in a dropdown when creating links.
@@ -139,12 +139,12 @@ If you leave `ALLOWED_HOSTS_JSON` unset/empty, API writes are **restricted to th
 
 ### 6. (Optional) Configure a custom domain / route
 
-To use a custom domain (e.g. `share.sillylittle.tech`), uncomment and update the
+To use a custom domain (e.g. `share.slt.ong`), uncomment and update the
 `[[routes]]` block in `wrangler.toml` and set the correct `zone_id`:
 
 ```toml
 [[routes]]
-pattern = "share.sillylittle.tech/*"
+pattern = "share.slt.ong/*"
 zone_id = "..."
 ```
 
