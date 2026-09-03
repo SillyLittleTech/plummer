@@ -18,8 +18,8 @@ preview_id = "00410bf2f1054283819de99e7958be89"
 # Uncomment and update to route a custom domain through this worker in production.
 #
 [[routes]]
-pattern = "share.slt.ong/*"
-zone_id = "7cb3a67ff9a720d9d07336094c5fd193"
+pattern = "share.slt.ong"
+custom_domain = true
 
 
 # ─── Secrets (set via CLI, NOT in this file) ─────────────────────────────────
