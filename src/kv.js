@@ -1,240 +1,322 @@
-async function parseJSON(raw) {
-  if (!raw) return null;
+async function parseJSON (raw) {
+  if (!raw) return null
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw)
   } catch {
-    return null;
+    return null
   }
 }
 
-export function normalizeHost(rawHost) {
+export function normalizeHost (rawHost) {
   // IMPORTANT: keep ports. For local dev we need exact Host header matching (e.g. localhost:8787).
-  return String(rawHost ?? '').trim().toLowerCase();
+  return String(rawHost ?? '').trim().toLowerCase()
 }
 
-function linkKey(host, slug) {
-  return `link:${host}:${slug}`;
+function linkKey (host, slug) {
+  return `link:${host}:${slug}`
 }
 
-function legacyLinkKey(slug) {
-  return `link:${slug}`;
+function legacyLinkKey (slug) {
+  return `link:${slug}`
 }
 
-function folderKey(host, folderSlug) {
-  return `folder:${host}:${folderSlug}`;
+function folderKey (host, folderSlug) {
+  return `folder:${host}:${folderSlug}`
 }
 
-function folderPrefix(host) {
-  return `folder:${host}:`;
+function folderPrefix (host) {
+  return `folder:${host}:`
 }
 
-function transformerKey(host, id) {
-  return `transformer:${host}:${id}`;
+function transformerKey (host, id) {
+  return `transformer:${host}:${id}`
 }
 
-function transformerPrefix(host) {
-  return `transformer:${host}:`;
+function transformerPrefix (host) {
+  return `transformer:${host}:`
 }
 
-export async function getFolder(env, host, folderSlug) {
-  const h = normalizeHost(host);
-  const direct = await parseJSON(await env.LINKIVERSE.get(folderKey(h, folderSlug)));
-  if (direct) return direct;
+export async function getFolder (env, host, folderSlug) {
+  const h = normalizeHost(host)
+  const direct = await parseJSON(await env.LINKIVERSE.get(folderKey(h, folderSlug)))
+  if (direct) return direct
 
   // Compatibility: if host includes a port, try the no-port key and migrate.
-  const noPort = h.replace(/:\d+$/, '');
+  const noPort = h.replace(/:\d+$/, '')
   if (noPort && noPort !== h) {
-    const legacy = await parseJSON(await env.LINKIVERSE.get(folderKey(noPort, folderSlug)));
-    if (!legacy) return null;
-    const migrated = { ...legacy, host: h };
-    await env.LINKIVERSE.put(folderKey(h, folderSlug), JSON.stringify(migrated));
-    await env.LINKIVERSE.delete(folderKey(noPort, folderSlug));
-    return migrated;
+    const legacy = await parseJSON(await env.LINKIVERSE.get(folderKey(noPort, folderSlug)))
+    if (!legacy) return null
+    const migrated = { ...legacy, host: h }
+    await env.LINKIVERSE.put(folderKey(h, folderSlug), JSON.stringify(migrated))
+    await env.LINKIVERSE.delete(folderKey(noPort, folderSlug))
+    return migrated
   }
 
-  return null;
+  return null
 }
 
-export async function putFolder(env, host, folder) {
-  const h = normalizeHost(host);
-  const f = { ...folder, host: h };
-  await env.LINKIVERSE.put(folderKey(h, f.slug), JSON.stringify(f));
+export async function putFolder (env, host, folder) {
+  const h = normalizeHost(host)
+  const f = { ...folder, host: h }
+  await env.LINKIVERSE.put(folderKey(h, f.slug), JSON.stringify(f))
 }
 
-export async function deleteFolder(env, host, folderSlug) {
-  const h = normalizeHost(host);
-  await env.LINKIVERSE.delete(folderKey(h, folderSlug));
+export async function deleteFolder (env, host, folderSlug) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.delete(folderKey(h, folderSlug))
 }
 
-export async function listFolders(env, host) {
-  const h = normalizeHost(host);
-  const folders = [];
-  let cursor;
+export async function listFolders (env, host) {
+  const h = normalizeHost(host)
+  const folders = []
+  let cursor
   do {
-    const page = await env.LINKIVERSE.list({ prefix: folderPrefix(h), limit: 100, cursor });
+    const page = await env.LINKIVERSE.list({ prefix: folderPrefix(h), limit: 100, cursor })
     for (const key of page.keys) {
-      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name));
-      if (parsed) folders.push(parsed);
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (parsed) folders.push(parsed)
     }
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
-  folders.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
-  return folders;
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  folders.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+  return folders
 }
 
-export async function listLinksByFolder(env, host, folderSlug) {
-  const h = normalizeHost(host);
+export async function listLinksByFolder (env, host, folderSlug) {
+  const h = normalizeHost(host)
   // NOTE: This currently scans all links and filters in memory.
   // If folder listings become high-traffic, consider maintaining a folder index/prefix to avoid full scans.
-  const all = await getAllLinks(env);
-  return all.filter((l) => normalizeHost(l.host) === h && (l.folderSlug ?? null) === folderSlug);
+  const all = await getAllLinks(env)
+  return all.filter((l) => normalizeHost(l.host) === h && (l.folderSlug ?? null) === folderSlug)
 }
 
 /**
  * Get a link by host+slug.
  * Falls back to legacy key format (`link:{slug}`) and migrates it to host format.
  */
-export async function getLink(env, host, slug) {
-  const h = normalizeHost(host);
-  const raw = await env.LINKIVERSE.get(linkKey(h, slug));
-  const parsed = await parseJSON(raw);
-  if (parsed) return parsed;
+export async function getLink (env, host, slug) {
+  const h = normalizeHost(host)
+  const raw = await env.LINKIVERSE.get(linkKey(h, slug))
+  const parsed = await parseJSON(raw)
+  if (parsed) return parsed
 
   // Compatibility: if host includes a port, try the no-port key and migrate.
-  const noPort = h.replace(/:\d+$/, '');
+  const noPort = h.replace(/:\d+$/, '')
   if (noPort && noPort !== h) {
-    const legacyPortRaw = await env.LINKIVERSE.get(linkKey(noPort, slug));
-    const legacyPortParsed = await parseJSON(legacyPortRaw);
+    const legacyPortRaw = await env.LINKIVERSE.get(linkKey(noPort, slug))
+    const legacyPortParsed = await parseJSON(legacyPortRaw)
     if (legacyPortParsed) {
-      const migrated = { ...legacyPortParsed, host: h };
-      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
-      await env.LINKIVERSE.delete(linkKey(noPort, slug));
-      return migrated;
+      const migrated = { ...legacyPortParsed, host: h }
+      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated))
+      await env.LINKIVERSE.delete(linkKey(noPort, slug))
+      return migrated
     }
   }
 
   // Legacy fallback: if found, migrate to host-scoped key.
-  const legacyRaw = await env.LINKIVERSE.get(legacyLinkKey(slug));
-  const legacyParsed = await parseJSON(legacyRaw);
+  const legacyRaw = await env.LINKIVERSE.get(legacyLinkKey(slug))
+  const legacyParsed = await parseJSON(legacyRaw)
   if (legacyParsed) {
-    const migrated = { ...legacyParsed, host: h };
-    await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
+    const migrated = { ...legacyParsed, host: h }
+    await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated))
     // Remove legacy key to avoid duplicates in listings once migrated.
-    await env.LINKIVERSE.delete(legacyLinkKey(slug));
-    return migrated;
+    await env.LINKIVERSE.delete(legacyLinkKey(slug))
+    return migrated
   }
 
   // Last-resort compatibility: scan existing link records to find a matching {host,slug}.
   // This handles older key formats and edge-case host encodings in local dev.
-  let cursor;
+  let cursor
   do {
-    const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor });
+    const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor })
     for (const key of page.keys) {
-      const candidate = await parseJSON(await env.LINKIVERSE.get(key.name));
-      if (!candidate) continue;
-      if (String(candidate.slug) !== String(slug)) continue;
-      if (normalizeHost(candidate.host) !== h) continue;
+      const candidate = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (!candidate) continue
+      if (String(candidate.slug) !== String(slug)) continue
+      if (normalizeHost(candidate.host) !== h) continue
 
       // Migrate to canonical key and delete the old one.
-      const migrated = { ...candidate, host: h };
-      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated));
-      if (key.name !== linkKey(h, slug)) await env.LINKIVERSE.delete(key.name);
-      return migrated;
+      const migrated = { ...candidate, host: h }
+      await env.LINKIVERSE.put(linkKey(h, slug), JSON.stringify(migrated))
+      if (key.name !== linkKey(h, slug)) await env.LINKIVERSE.delete(key.name)
+      return migrated
     }
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
 
-  return null;
+  return null
 }
 
-export async function putLink(env, host, link) {
-  const h = normalizeHost(host);
-  const withHost = { ...link, host: h };
-  await env.LINKIVERSE.put(linkKey(h, withHost.slug), JSON.stringify(withHost));
+export async function putLink (env, host, link) {
+  const h = normalizeHost(host)
+  const withHost = { ...link, host: h }
+  await env.LINKIVERSE.put(linkKey(h, withHost.slug), JSON.stringify(withHost))
 }
 
-export async function deleteLink(env, host, slug) {
-  const h = normalizeHost(host);
-  await env.LINKIVERSE.delete(linkKey(h, slug));
+export async function deleteLink (env, host, slug) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.delete(linkKey(h, slug))
 }
 
-export async function getTransformer(env, host, id) {
-  const h = normalizeHost(host);
-  return await parseJSON(await env.LINKIVERSE.get(transformerKey(h, id)));
+export async function getTransformer (env, host, id) {
+  const h = normalizeHost(host)
+  return await parseJSON(await env.LINKIVERSE.get(transformerKey(h, id)))
 }
 
-export async function putTransformer(env, host, transformer) {
-  const h = normalizeHost(host);
-  const withHost = { ...transformer, host: h };
-  await env.LINKIVERSE.put(transformerKey(h, withHost.id), JSON.stringify(withHost));
+export async function putTransformer (env, host, transformer) {
+  const h = normalizeHost(host)
+  const withHost = { ...transformer, host: h }
+  await env.LINKIVERSE.put(transformerKey(h, withHost.id), JSON.stringify(withHost))
 }
 
-export async function deleteTransformer(env, host, id) {
-  const h = normalizeHost(host);
-  await env.LINKIVERSE.delete(transformerKey(h, id));
+export async function deleteTransformer (env, host, id) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.delete(transformerKey(h, id))
 }
 
-export async function listTransformers(env, host) {
-  const h = normalizeHost(host);
-  const transformers = [];
-  let cursor;
+export async function listTransformers (env, host) {
+  const h = normalizeHost(host)
+  const transformers = []
+  let cursor
   do {
-    const page = await env.LINKIVERSE.list({ prefix: transformerPrefix(h), limit: 100, cursor });
+    const page = await env.LINKIVERSE.list({ prefix: transformerPrefix(h), limit: 100, cursor })
     for (const key of page.keys) {
-      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name));
-      if (parsed) transformers.push(parsed);
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (parsed) transformers.push(parsed)
     }
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
   transformers.sort((a, b) => {
-    const ap = Number(a.priority ?? 100);
-    const bp = Number(b.priority ?? 100);
-    if (ap !== bp) return ap - bp;
-    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-  });
-  return transformers;
+    const ap = Number(a.priority ?? 100)
+    const bp = Number(b.priority ?? 100)
+    if (ap !== bp) return ap - bp
+    return (a.createdAt ?? 0) - (b.createdAt ?? 0)
+  })
+  return transformers
 }
 
-export async function getAllTransformers(env) {
-  const transformers = [];
-  let cursor;
+export async function getAllTransformers (env) {
+  const transformers = []
+  let cursor
   do {
-    const page = await env.LINKIVERSE.list({ prefix: 'transformer:', limit: 100, cursor });
+    const page = await env.LINKIVERSE.list({ prefix: 'transformer:', limit: 100, cursor })
     for (const key of page.keys) {
-      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name));
-      if (!parsed) continue;
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (!parsed) continue
       if (!parsed.host) {
-        const parts = key.name.split(':');
-        if (parts.length >= 3) parsed.host = parts[1];
+        const parts = key.name.split(':')
+        if (parts.length >= 3) parsed.host = parts[1]
       }
-      transformers.push(parsed);
+      transformers.push(parsed)
     }
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
-  transformers.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return transformers;
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  transformers.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+  return transformers
 }
 
 /** Fetch all stored links (all hosts), handling KV list pagination. */
-export async function getAllLinks(env) {
-  const links = [];
-  let cursor;
+export async function getAllLinks (env) {
+  const links = []
+  let cursor
   do {
-    const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor });
+    const page = await env.LINKIVERSE.list({ prefix: 'link:', limit: 100, cursor })
     for (const key of page.keys) {
-      const raw = await env.LINKIVERSE.get(key.name);
-      const parsed = await parseJSON(raw);
-      if (!parsed) continue;
+      const raw = await env.LINKIVERSE.get(key.name)
+      const parsed = await parseJSON(raw)
+      if (!parsed) continue
 
       // Infer host from key if needed (new keys are link:{host}:{slug})
       if (!parsed.host) {
-        const parts = key.name.split(':');
-        if (parts.length === 3) parsed.host = parts[1];
+        const parts = key.name.split(':')
+        if (parts.length === 3) parsed.host = parts[1]
       }
-      links.push(parsed);
+      links.push(parsed)
     }
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
-  links.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return links;
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  links.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+  return links
+}
+
+// API Keys Schema
+function apiKeyKey (host, id) {
+  return `apikey:${host}:${id}`
+}
+
+function apiKeyPrefix (host) {
+  return `apikey:${host}:`
+}
+
+export async function getApiKey (env, host, id) {
+  const h = normalizeHost(host)
+  return await parseJSON(await env.LINKIVERSE.get(apiKeyKey(h, id)))
+}
+
+export async function putApiKey (env, host, key) {
+  const h = normalizeHost(host)
+  const withHost = { ...key, host: h }
+  await env.LINKIVERSE.put(apiKeyKey(h, withHost.id), JSON.stringify(withHost))
+}
+
+export async function deleteApiKey (env, host, id) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.delete(apiKeyKey(h, id))
+}
+
+export async function listApiKeys (env, host) {
+  const h = normalizeHost(host)
+  const keys = []
+  let cursor
+  do {
+    const page = await env.LINKIVERSE.list({ prefix: apiKeyPrefix(h), limit: 100, cursor })
+    for (const key of page.keys) {
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (parsed) keys.push(parsed)
+    }
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  keys.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+  return keys
+}
+
+export async function getAllApiKeys (env) {
+  const keys = []
+  let cursor
+  do {
+    const page = await env.LINKIVERSE.list({ prefix: 'apikey:', limit: 100, cursor })
+    for (const key of page.keys) {
+      const parsed = await parseJSON(await env.LINKIVERSE.get(key.name))
+      if (!parsed) continue
+      if (!parsed.host) {
+        const parts = key.name.split(':')
+        if (parts.length >= 3) parsed.host = parts[1]
+      }
+      keys.push(parsed)
+    }
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  keys.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+  return keys
+}
+
+// Image Storage Schema
+function imageKey (host, slug) {
+  return `image:${host}:${slug}`
+}
+
+export async function getImageData (env, host, slug) {
+  const h = normalizeHost(host)
+  const data = await env.LINKIVERSE.get(imageKey(h, slug), { type: 'arrayBuffer' })
+  return data
+}
+
+export async function putImageData (env, host, slug, buffer) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.put(imageKey(h, slug), buffer)
+}
+
+export async function deleteImageData (env, host, slug) {
+  const h = normalizeHost(host)
+  await env.LINKIVERSE.delete(imageKey(h, slug))
 }

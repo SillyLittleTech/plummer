@@ -1,7 +1,7 @@
-import { htmlPage } from './shared.js';
-import { escHtml } from '../util.js';
+import { htmlPage } from './shared.js'
+import { escHtml } from '../util.js'
 
-export function passwordPage(slug, badPassword) {
+export function passwordPage (slug, badPassword) {
   return htmlPage(
     'Protected Link — Plummer',
     `<div class="pw-wrap">
@@ -30,11 +30,11 @@ export function passwordPage(slug, badPassword) {
     h1 { font-size:1.5rem; font-weight:800; margin-bottom:10px; }
     p { opacity:0.72; margin-bottom:20px; font-size:0.95rem; }
     .alert { text-align:left; }
-    `,
-  );
+    `
+  )
 }
 
-export function expiredPage() {
+export function expiredPage () {
   return htmlPage(
     'Link Expired — Plummer',
     `<div class="center-wrap">
@@ -51,11 +51,11 @@ export function expiredPage() {
     .page-icon { font-size:3rem; margin-bottom:18px; }
     h1 { font-size:1.5rem; font-weight:800; margin-bottom:10px; }
     p { opacity:0.72; margin-bottom:4px; font-size:0.95rem; }
-    `,
-  );
+    `
+  )
 }
 
-export function inactivePage() {
+export function inactivePage () {
   return htmlPage(
     'Link Inactive — Plummer',
     `<div class="center-wrap">
@@ -72,11 +72,11 @@ export function inactivePage() {
     .page-icon { font-size:3rem; margin-bottom:18px; }
     h1 { font-size:1.5rem; font-weight:800; margin-bottom:10px; }
     p { opacity:0.72; margin-bottom:4px; font-size:0.95rem; }
-    `,
-  );
+    `
+  )
 }
 
-export function deletedPage() {
+export function deletedPage () {
   return htmlPage(
     'Link Deleted — Plummer',
     `<div class="center-wrap">
@@ -93,11 +93,11 @@ export function deletedPage() {
     .page-icon { font-size:3rem; margin-bottom:18px; }
     h1 { font-size:1.5rem; font-weight:800; margin-bottom:10px; }
     p { opacity:0.72; margin-bottom:4px; font-size:0.95rem; }
-    `,
-  );
+    `
+  )
 }
 
-export function notFoundPage() {
+export function notFoundPage () {
   return htmlPage(
     'Not Found — Plummer',
     `<div class="center-wrap">
@@ -114,11 +114,11 @@ export function notFoundPage() {
     .page-icon { font-size:3rem; margin-bottom:18px; }
     h1 { font-size:1.5rem; font-weight:800; margin-bottom:10px; }
     p { opacity:0.72; margin-bottom:4px; font-size:0.95rem; }
-    `,
-  );
+    `
+  )
 }
 
-export function misconfiguredPage() {
+export function misconfiguredPage () {
   return htmlPage(
     'Setup Required — Plummer',
     `<div class="center-wrap">
@@ -152,7 +152,6 @@ export function misconfiguredPage() {
       border-radius:8px; font-family:ui-monospace,monospace; font-size:13px;
       text-align:left; overflow-x:auto;
     }
-    `,
-  );
+    `
+  )
 }
-
