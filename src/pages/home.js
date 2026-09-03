@@ -45,7 +45,7 @@ export function homePage(origin) {
 
 <footer class="home-footer">
   Plummer <span class="app-version">${APP_VERSION}</span> — Open-source link shortener by
-  <a href="https://sillylittle.tech" target="_blank" rel="noopener">SillyLittleTech</a>.
+  <a href="https://slt.ong" target="_blank" rel="noopener">SillyLittleTech</a>.
   <a href="https://github.com/SillyLittleTech/plummer" target="_blank" rel="noopener">View on GitHub</a>
 </footer>`,
     /* extra CSS */
